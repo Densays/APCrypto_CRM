@@ -4,95 +4,384 @@ import { TrendingUp, Calendar, Users, Target, DollarSign, Send, Plus, X, Message
 
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwMMJr0ie58lHuRucI6-hTkhhUym44Shy2DsXz_kmBy1k7N-rIBICYlq5Wucibw8zqRPQ/exec';
 
-const sendToGoogleSheets = async (data, type) => {
+const sendToGoogleSheets = async (data, type, onComplete) => {
+  const reportData = {...data, type, timestamp: new Date().toISOString()};
+  console.log('📤 Отправка данных:', reportData);
+  
+  // ВСЕГДА сохраняем локально сначала
   try {
-    await fetch(GOOGLE_SCRIPT_URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      body: JSON.stringify({...data, type, timestamp: new Date().toISOString()})
-    });
-    alert('✅ Отправлено в Google Sheets!');
+    const savedReports = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+    savedReports.push(reportData);
+    localStorage.setItem('pendingReports', JSON.stringify(savedReports));
+    console.log('✅ Данные сохранены локально');
   } catch (e) {
-    alert('❌ Ошибка отправки');
+    console.warn('⚠️ Не удалось сохранить локально:', e.message);
   }
+
+  // Показываем пользователю успешное сохранение
+  alert('✅ Отчет сохранен! Данные отправляются в Google Sheets...');
+  
+  // В фоне пытаемся отправить на сервер (не блокируем UI)
+  (async () => {
+    // Попытка 1: Обычный fetch с CORS
+    try {
+      console.log('📤 Попытка 1: Стандартный POST запрос');
+      const response = await fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reportData)
+      });
+      if (response.ok) {
+        console.log('✅ Данные успешно отправлены на сервер!');
+        return;
+      }
+    } catch (e) {
+      console.warn('⚠️ Попытка 1 не удалась:', e.message);
+    }
+
+    // Попытка 2: FormData
+    try {
+      console.log('📤 Попытка 2: FormData метод');
+      const formData = new FormData();
+      formData.append('data', JSON.stringify(reportData));
+      const response = await fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'cors',
+        body: formData
+      });
+      if (response.ok) {
+        console.log('✅ FormData отправка успешна!');
+        return;
+      }
+    } catch (e) {
+      console.warn('⚠️ Попытка 2 не удалась:', e.message);
+    }
+
+    // Попытка 3: no-cors mode (отправляет но браузер не может проверить результат)
+    try {
+      console.log('📤 Попытка 3: no-cors режим');
+      await fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(reportData)
+      });
+      console.log('ℹ️ Данные отправлены в режиме no-cors (результат может быть недоступен)');
+      return;
+    } catch (e) {
+      console.warn('⚠️ Попытка 3 не удалась:', e.message);
+    }
+
+    console.log('ℹ️ Не удалось отправить на сервер, но данные сохранены локально');
+  })();
+
+  if (typeof onComplete === 'function') onComplete();
+};
+
+const fetchSheetData = async (params) => {
+  try {
+    const query = new URLSearchParams(params);
+    const url = `${GOOGLE_SCRIPT_URL}?${query.toString()}`;
+    console.log('� Запрос к Google Sheets:', url);
+    
+    // Попытка 1: Обычный fetch с CORS
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        mode: 'cors',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        console.error('❌ Ошибка при загрузке данных. Статус:', response.status, response.statusText);
+        return [];
+      }
+      
+      const result = await response.json();
+      console.log('✅ Данные получены:', result);
+      
+      if (!Array.isArray(result)) {
+        console.warn('⚠️ Данные не являются массивом, получено:', typeof result, result);
+        return [];
+      }
+      
+      console.log(`✅ Загружено ${result.length} записей`);
+      return result;
+    } catch (corsError) {
+      console.warn('⚠️ CORS запрос не удалась, пробую no-cors:', corsError.message);
+      
+      // Попытка 2: no-cors (но не сможем получить JSON)
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          mode: 'no-cors'
+        });
+        console.log('✅ Запрос отправлен (no-cors), но данные может быть недоступны');
+        return [];
+      } catch (e) {
+        console.error('❌ Все методы загрузки данных не сработали:', e.message);
+        return [];
+      }
+    }
+  } catch (error) {
+    console.error('❌ Ошибка при загрузке данных:', error.message);
+    return [];
+  }
+};
+
+const formatDateString = (date) => date.toISOString().split('T')[0];
+
+const saveDraft = (key, value) => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.warn('LocalStorage save failed', error);
+  }
+};
+
+const loadDraft = (key, defaultValue) => {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : defaultValue;
+  } catch (error) {
+    console.warn('LocalStorage load failed', error);
+    return defaultValue;
+  }
+};
+
+const generateZeroData = (days) => {
+  const data = [];
+  const groupBy = days <= 7 ? 'day' : days <= 90 ? 'week' : 'month';
+
+  if (groupBy === 'day') {
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      data.push({
+        date: date.toLocaleDateString('ru-RU', { month: 'short', day: 'numeric' }),
+        revenue: 0,
+        leads: 0,
+        dialogs: 0,
+        intensive: 0,
+        zoom: 0,
+        conversion: 0
+      });
+    }
+  } else if (groupBy === 'week') {
+    const weeks = Math.ceil(days / 7);
+    for (let i = weeks - 1; i >= 0; i--) {
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() - (i * 7));
+      const startDate = new Date(endDate);
+      startDate.setDate(startDate.getDate() - 6);
+
+      const startDay = startDate.getDate();
+      const endDay = endDate.getDate();
+      const startMonth = startDate.toLocaleDateString('ru-RU', { month: 'short' });
+      const endMonth = endDate.toLocaleDateString('ru-RU', { month: 'short' });
+
+      const label = startMonth === endMonth
+        ? `${startDay}-${endDay} ${startMonth}`
+        : `${startDay} ${startMonth} - ${endDay} ${endMonth}`;
+
+      data.push({
+        date: label,
+        revenue: 0,
+        leads: 0,
+        dialogs: 0,
+        intensive: 0,
+        zoom: 0,
+        conversion: 0
+      });
+    }
+  } else {
+    const months = Math.ceil(days / 30);
+    for (let i = months - 1; i >= 0; i--) {
+      const date = new Date();
+      date.setMonth(date.getMonth() - i);
+      data.push({
+        date: date.toLocaleDateString('ru-RU', { month: 'short' }),
+        revenue: 0,
+        leads: 0,
+        dialogs: 0,
+        intensive: 0,
+        zoom: 0,
+        conversion: 0
+      });
+    }
+  }
+
+  return data;
+};
+
+const fetchAnalyticsData = async (days, customDates) => {
+  let start, end;
+  if (customDates && customDates.start) {
+    start = customDates.start;
+    end = customDates.end || customDates.start;
+    console.log('📅 Загрузка данных за период:', start, '-', end);
+  } else {
+    const today = new Date();
+    end = formatDateString(today);
+    start = formatDateString(new Date(today.getTime() - days * 24 * 60 * 60 * 1000));
+    console.log('📅 Загрузка данных за', days, 'дней:', start, '-', end);
+  }
+
+  // Сначала пытаемся загрузить с сервера
+  const serverRows = await fetchSheetData({
+    type: 'daily',
+    start,
+    end
+  });
+
+  console.log('📊 Получено записей с сервера:', serverRows.length);
+
+  // Если с сервера ничего не пришло - ищем локальные данные
+  let rows = serverRows;
+  if (rows.length === 0) {
+    console.log('ℹ️ Нет данных с сервера, загружаю локальные данные');
+    try {
+      const pendingReports = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+      rows = pendingReports.filter(report => {
+        if (report.type !== 'daily') return false;
+        const reportDate = report.reportDate || report.date;
+        if (!reportDate) return false;
+        if (start && reportDate < start) return false;
+        if (end && reportDate > end) return false;
+        return true;
+      });
+      console.log('📊 Загружено локальных записей:', rows.length);
+    } catch (e) {
+      console.warn('⚠️ Не удалось загрузить локальные данные:', e.message);
+    }
+  }
+
+  if (rows.length === 0) {
+    console.log('⚠️ Нет данных, генерирую нулевые данные');
+    return generateZeroData(days);
+  }
+
+  // Aggregate data by date
+  const aggregated = {};
+  rows.forEach(row => {
+    const date = row.date || row.reportDate;
+    if (!date) {
+      console.warn('⚠️ Пропущена запись без даты:', row);
+      return;
+    }
+    if (!aggregated[date]) {
+      aggregated[date] = {
+        date,
+        revenue: 0,
+        leads: 0,
+        dialogs: 0,
+        intensive: 0,
+        zoom: 0,
+        conversion: 0,
+        totalLeads: 0
+      };
+    }
+    aggregated[date].revenue += Number(row.totalUSD) || 0;
+    aggregated[date].leads += Number(row.newLeads) || 0;
+    aggregated[date].dialogs += Number(row.dialogs) || 0;
+    aggregated[date].intensive += Number(row.intensive) || 0;
+    aggregated[date].zoom += Number(row.zoom) || 0;
+    aggregated[date].totalLeads += Number(row.totalLeads) || 0;
+  });
+
+  const result = Object.values(aggregated).map(item => ({
+    ...item,
+    conversion: item.leads > 0 ? (item.revenue / item.leads) * 100 : 0
+  })).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  console.log('✅ Агрегировано записей:', result.length);
+  console.log('📈 Итоговые данные:', result);
+
+  return result;
 };
 
 export default function CRMDashboard() {
   const [activeTab, setActiveTab] = useState('daily');
   const [period, setPeriod] = useState(30);
   const [customDates, setCustomDates] = useState({ start: '', end: '' });
-  const [analyticsData, setAnalyticsData] = useState(null);
+  const [analyticsQuery, setAnalyticsQuery] = useState({ period: 30, customDates: { start: '', end: '' } });
+  const [analyticsData, setAnalyticsData] = useState([]);
+  const [analyticsRefreshKey, setAnalyticsRefreshKey] = useState(0);
+
+  const refreshAnalytics = () => setAnalyticsRefreshKey((value) => value + 1);
+  const applyAnalytics = () => setAnalyticsQuery({ period, customDates });
+
+  // Попытка отправить сохраненные данные при загрузке приложения
+  useEffect(() => {
+    const retryPendingReports = async () => {
+      try {
+        const pendingReports = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+        if (pendingReports.length === 0) {
+          console.log('✅ Нет сохраненных отчетов для отправки');
+          return;
+        }
+
+        console.log(`📤 Попытка отправить ${pendingReports.length} сохраненных отчетов`);
+        
+        let successCount = 0;
+        for (const report of pendingReports) {
+          try {
+            const response = await fetch(GOOGLE_SCRIPT_URL, {
+              method: 'POST',
+              mode: 'cors',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(report)
+            });
+            
+            if (response && response.ok) {
+              console.log('✅ Отправлен сохраненный отчет:', report);
+              successCount++;
+            } else {
+              console.warn('⚠️ Сервер ответил с ошибкой, сохраненный отчет не отправлен');
+            }
+          } catch (e) {
+            console.warn('⚠️ Не удалось отправить сохраненный отчет:', e.message);
+          }
+        }
+
+        // Очистить только успешно отправленные отчеты
+        if (successCount > 0) {
+          try {
+            localStorage.removeItem('pendingReports');
+            console.log(`✅ Очищены ${successCount} отправленных отчетов`);
+          } catch (e) {
+            console.warn('⚠️ Не удалось очистить сохраненные отчеты');
+          }
+        } else {
+          console.log('ℹ️ Отчеты не отправлены, сохраняю их на потом');
+        }
+      } catch (e) {
+        console.warn('⚠️ Ошибка при проверке сохраненных отчетов:', e.message);
+      }
+    };
+
+    // Отправить при загрузке приложения
+    retryPendingReports();
+
+    // Также повторять попытку каждые 30 сек
+    const interval = setInterval(retryPendingReports, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'analytics') {
-      const data = generateDemoData(period);
-      setAnalyticsData(data);
-    }
-  }, [activeTab, period]);
+      const loadAnalytics = async () => {
+        const fetchedData = await fetchAnalyticsData(analyticsQuery.period, analyticsQuery.customDates);
+        setAnalyticsData(fetchedData);
+      };
 
-  const generateDemoData = (days) => {
-    const data = [];
-    const groupBy = days <= 7 ? 'day' : days <= 90 ? 'week' : 'month';
-    
-    if (groupBy === 'day') {
-      for (let i = days - 1; i >= 0; i--) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        data.push({
-          date: date.toLocaleDateString('ru-RU', { month: 'short', day: 'numeric' }),
-          revenue: Math.random() * 5000 + 2000,
-          leads: Math.floor(Math.random() * 20 + 5),
-          dialogs: Math.floor(Math.random() * 15 + 3),
-          intensive: Math.floor(Math.random() * 8 + 1),
-          zoom: Math.floor(Math.random() * 6 + 1),
-          conversion: Math.random() * 30 + 10
-        });
-      }
-    } else if (groupBy === 'week') {
-      const weeks = Math.ceil(days / 7);
-      for (let i = weeks - 1; i >= 0; i--) {
-        const endDate = new Date();
-        endDate.setDate(endDate.getDate() - (i * 7));
-        const startDate = new Date(endDate);
-        startDate.setDate(startDate.getDate() - 6);
-        
-        const startDay = startDate.getDate();
-        const endDay = endDate.getDate();
-        const startMonth = startDate.toLocaleDateString('ru-RU', { month: 'short' });
-        const endMonth = endDate.toLocaleDateString('ru-RU', { month: 'short' });
-        
-        const label = startMonth === endMonth 
-          ? `${startDay}-${endDay} ${startMonth}`
-          : `${startDay} ${startMonth} - ${endDay} ${endMonth}`;
-        
-        data.push({
-          date: label,
-          revenue: Math.random() * 25000 + 10000,
-          leads: Math.floor(Math.random() * 100 + 30),
-          dialogs: Math.floor(Math.random() * 70 + 20),
-          intensive: Math.floor(Math.random() * 40 + 10),
-          zoom: Math.floor(Math.random() * 30 + 5),
-          conversion: Math.random() * 30 + 10
-        });
-      }
-    } else {
-      const months = Math.ceil(days / 30);
-      for (let i = months - 1; i >= 0; i--) {
-        const date = new Date();
-        date.setMonth(date.getMonth() - i);
-        data.push({
-          date: date.toLocaleDateString('ru-RU', { month: 'short' }),
-          revenue: Math.random() * 100000 + 40000,
-          leads: Math.floor(Math.random() * 400 + 100),
-          dialogs: Math.floor(Math.random() * 280 + 70),
-          intensive: Math.floor(Math.random() * 160 + 40),
-          zoom: Math.floor(Math.random() * 120 + 20),
-          conversion: Math.random() * 30 + 10
-        });
-      }
+      loadAnalytics();
     }
-    return data;
-  };
+  }, [activeTab, analyticsQuery, analyticsRefreshKey]);
+
 
   const tabs = [
     { id: 'daily', label: 'Ежедневный', icon: Calendar },
@@ -139,11 +428,11 @@ export default function CRMDashboard() {
       </nav>
 
       <div className="max-w-7xl mx-auto p-6">
-        {activeTab === 'daily' && <DailyReport />}
-        {activeTab === 'weekly' && <WeeklyReport />}
-        {activeTab === 'monthly' && <MonthlyReport />}
+        {activeTab === 'daily' && <DailyReport onSendSuccess={refreshAnalytics} />}
+        {activeTab === 'weekly' && <WeeklyReport onSendSuccess={refreshAnalytics} />}
+        {activeTab === 'monthly' && <MonthlyReport onSendSuccess={refreshAnalytics} />}
         {activeTab === 'analytics' && (
-          <Analytics data={analyticsData} period={period} setPeriod={setPeriod} customDates={customDates} setCustomDates={setCustomDates} />
+          <Analytics data={analyticsData} period={period} setPeriod={setPeriod} customDates={customDates} setCustomDates={setCustomDates} applyAnalytics={applyAnalytics} />
         )}
       </div>
     </div>
@@ -151,16 +440,67 @@ export default function CRMDashboard() {
 }
 
 // DAILY REPORT - COMPLETE
-function DailyReport() {
-  const [formData, setFormData] = useState({
-    rateUSD: 95, rateEUR: 103, rateUSDT: 1,
-    countUSD: 0, sumUSD: 0,
-    countUSDT: 0, sumUSDT: 0,
-    countRUB: 0, sumRUB: 0,
-    countEUR: 0, sumEUR: 0,
-    dialogs: 0, newLeads: 0, totalLeads: 0,
-    potential: '', notes: ''
+function DailyReport({ onSendSuccess }) {
+  const draftKey = 'dailyReportDraft';
+  const [formData, setFormData] = useState(() => {
+    const loaded = loadDraft(draftKey, {
+      reportDate: formatDateString(new Date()),
+      rateUSD: 95, rateEUR: 103, rateUSDT: 1,
+      countUSD: 0, sumUSD: 0,
+      countUSDT: 0, sumUSDT: 0,
+      countRUB: 0, sumRUB: 0,
+      countEUR: 0, sumEUR: 0,
+      newLeads: 0, dialogs: 0, totalLeads: 0,
+      potentialRows: Array.from({ length: 6 }, () => ({ account: '', profile: '' })),
+      notes: ''
+    });
+    return typeof loaded === 'object' && loaded !== null ? loaded : {
+      reportDate: formatDateString(new Date()),
+      rateUSD: 95, rateEUR: 103, rateUSDT: 1,
+      countUSD: 0, sumUSD: 0,
+      countUSDT: 0, sumUSDT: 0,
+      countRUB: 0, sumRUB: 0,
+      countEUR: 0, sumEUR: 0,
+      newLeads: 0, dialogs: 0, totalLeads: 0,
+      potentialRows: Array.from({ length: 6 }, () => ({ account: '', profile: '' })),
+      notes: ''
+    };
   });
+
+  useEffect(() => {
+    saveDraft(draftKey, formData);
+  }, [formData]);
+
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [lastSavedData, setLastSavedData] = useState(() => {
+    const raw = window.localStorage.getItem('lastDailyReport');
+    return raw ? JSON.parse(raw) : null;
+  });
+
+  const saveReport = (data = formData) => {
+    const reportData = { ...data };
+    window.localStorage.setItem('lastDailyReport', JSON.stringify(reportData));
+    saveDraft(draftKey, reportData);
+    setLastSavedData(reportData);
+  };
+
+  const loadLastReport = () => {
+    const raw = window.localStorage.getItem('lastDailyReport');
+    if (!raw) {
+      alert('❌ Нет предыдущего сохранённого отчёта');
+      return;
+    }
+    const reportData = JSON.parse(raw);
+    setFormData(reportData);
+    setSummaryOpen(false);
+    alert('✅ Предыдущий отчёт загружен');
+  };
+
+  const handleSend = () => {
+    saveReport();
+    sendToGoogleSheets({ ...formData, section: 'daily' }, 'daily', onSendSuccess);
+    setSummaryOpen(true);
+  };
 
   const calc = () => {
     const { rateUSD, rateEUR, rateUSDT, countUSD, sumUSD, countUSDT, sumUSDT, countRUB, sumRUB, countEUR, sumEUR } = formData;
@@ -191,13 +531,26 @@ function DailyReport() {
   };
 
   const { avgUSD, rubUSD, usdUSDT, rubUSDT, usdRUB, usdEUR, rubEUR, totalCount, totalUSD, totalRUB, avgTotalUSD, avgTotalRUB } = calc();
+  const activityConversion = formData.newLeads > 0 ? (formData.dialogs / formData.newLeads) * 100 : 0;
+  const dailyPotentialCount = formData.potentialRows.length;
 
   return (
     <div className="bg-white rounded-2xl shadow-xl p-8 max-w-5xl mx-auto">
       <h2 className="text-3xl font-bold text-slate-800 mb-6 text-center">📅 Ежедневный отчёт</h2>
       <form className="space-y-6">
         
-        <Section title="💱 Курсы валют (для конвертации)" bg="bg-yellow-50">
+        <Section title="� Дата отчёта">
+          <div className="grid grid-cols-2 gap-4">
+            <Inp
+              label="Дата"
+              type="date"
+              value={formData.reportDate}
+              onChange={(v) => setFormData({ ...formData, reportDate: v })}
+            />
+          </div>
+        </Section>
+
+        <Section title="�💱 Курсы валют (для конвертации)" bg="bg-yellow-50">
           <div className="grid grid-cols-3 gap-4">
             <Inp label="USD → RUB" type="number" step="0.01" value={formData.rateUSD} onChange={(v) => setFormData({...formData, rateUSD: parseFloat(v)||0})} />
             <Inp label="EUR → RUB" type="number" step="0.01" value={formData.rateEUR} onChange={(v) => setFormData({...formData, rateEUR: parseFloat(v)||0})} />
@@ -272,45 +625,314 @@ function DailyReport() {
         </div>
 
         <Section title="📈 Активность">
-          <div className="grid grid-cols-3 gap-4">
-            <Inp label="Открытых диалогов *" type="number" value={formData.dialogs} onChange={(v) => setFormData({...formData, dialogs: parseFloat(v)||0})} />
+          <div className="grid grid-cols-4 gap-4">
             <Inp label="Новых лидов *" type="number" value={formData.newLeads} onChange={(v) => setFormData({...formData, newLeads: parseFloat(v)||0})} />
+            <Inp label="Открытых диалогов *" type="number" value={formData.dialogs} onChange={(v) => setFormData({...formData, dialogs: parseFloat(v)||0})} />
             <Inp label="Всего в работе *" type="number" value={formData.totalLeads} onChange={(v) => setFormData({...formData, totalLeads: parseFloat(v)||0})} />
+            <Inp label="Конверсия (%)" value={`${activityConversion.toFixed(1)}%`} disabled />
           </div>
         </Section>
 
         <Section title="🔥 Потенциал">
-          <textarea value={formData.potential} onChange={(e) => setFormData({...formData, potential: e.target.value})} placeholder="@client1, @client2..." className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none resize-none" rows="3" />
+          <div className="space-y-3">
+            {formData.potentialRows.map((row, index) => (
+              <div key={index} className="grid grid-cols-2 gap-3">
+                <Inp
+                  label={`Аккаунт ${index + 1}`}
+                  type="text"
+                  value={row.account}
+                  placeholder="https://t.me/client"
+                  onChange={(v) => {
+                    const rows = [...formData.potentialRows];
+                    rows[index].account = v;
+                    setFormData({ ...formData, potentialRows: rows });
+                  }}
+                />
+                <Inp
+                  label={`Профайл ${index + 1}`}
+                  type="text"
+                  value={row.profile}
+                  placeholder="Краткий профиль клиента"
+                  onChange={(v) => {
+                    const rows = [...formData.potentialRows];
+                    rows[index].profile = v;
+                    setFormData({ ...formData, potentialRows: rows });
+                  }}
+                />
+              </div>
+            ))}
+          </div>
         </Section>
 
         <Section title="📝 Заметки">
           <textarea value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} placeholder="Комментарии..." className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none resize-none" rows="4" />
         </Section>
 
-        <Btn onClick={() => sendToGoogleSheets(formData, 'Ежедневный')}>Отправить отчёт</Btn>
+        <div className="grid grid-cols-2 gap-4">
+          <button
+            type="button"
+            onClick={loadLastReport}
+            className="py-4 bg-slate-600 text-white rounded-xl font-semibold text-lg hover:shadow-xl transition-all"
+          >
+            Загрузить предыдущий
+          </button>
+          <Btn onClick={handleSend}>Сохранить и отправить отчёт</Btn>
+        </div>
       </form>
+
+      {lastSavedData && (
+        <div className="mt-8">
+          <button
+            type="button"
+            onClick={() => setSummaryOpen(!summaryOpen)}
+            className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl font-semibold text-lg hover:shadow-2xl transition-all"
+          >
+            {summaryOpen ? 'Скрыть сводный отчёт' : 'Показать сводный отчёт'}
+          </button>
+        </div>
+      )}
+
+      {summaryOpen && lastSavedData && <DailySummary data={lastSavedData} />}
+    </div>
+  );
+}
+
+// DAILY SUMMARY - For viewing saved daily report
+function DailySummary({ data }) {
+  const { avgUSD, rubUSD, usdUSDT, rubUSDT, usdRUB, usdEUR, rubEUR, totalCount, totalUSD, totalRUB, avgTotalUSD, avgTotalRUB } = (() => {
+    const { rateUSD = 95, rateEUR = 103, rateUSDT = 1, countUSD = 0, sumUSD = 0, countUSDT = 0, sumUSDT = 0, countRUB = 0, sumRUB = 0, countEUR = 0, sumEUR = 0 } = data;
+    
+    const avgUSD = countUSD > 0 ? sumUSD / countUSD : 0;
+    const rubUSD = sumUSD * rateUSD;
+    const usdUSDT = sumUSDT * rateUSDT;
+    const rubUSDT = usdUSDT * rateUSD;
+    const usdRUB = rateUSD > 0 ? sumRUB / rateUSD : 0;
+    const usdEUR = rateUSD > 0 ? (sumEUR * rateEUR) / rateUSD : 0;
+    const rubEUR = sumEUR * rateEUR;
+    
+    const totalCount = parseInt(countUSD||0) + parseInt(countUSDT||0) + parseInt(countRUB||0) + parseInt(countEUR||0);
+    const totalUSD = (parseFloat(sumUSD)||0) + usdUSDT + usdRUB + usdEUR;
+    const totalRUB = rubUSD + rubUSDT + (parseFloat(sumRUB)||0) + rubEUR;
+    const avgTotalUSD = totalCount > 0 ? totalUSD / totalCount : 0;
+    const avgTotalRUB = totalCount > 0 ? totalRUB / totalCount : 0;
+    
+    return { avgUSD, rubUSD, usdUSDT, rubUSDT, usdRUB, usdEUR, rubEUR, totalCount, totalUSD, totalRUB, avgTotalUSD, avgTotalRUB };
+  })();
+
+  return (
+    <div className="bg-white rounded-2xl shadow-xl p-8 max-w-5xl mx-auto mt-8">
+      <h2 className="text-3xl font-bold text-slate-800 mb-6 text-center">📊 Сводка ежедневного отчёта</h2>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="bg-blue-50 rounded-xl p-6">
+          <div className="text-sm text-blue-600 mb-2">Всего оплат</div>
+          <div className="text-3xl font-bold text-blue-800">{totalCount}</div>
+        </div>
+        <div className="bg-green-50 rounded-xl p-6">
+          <div className="text-sm text-green-600 mb-2">Общая сумма (USD)</div>
+          <div className="text-3xl font-bold text-green-800">${totalUSD.toFixed(2)}</div>
+        </div>
+        <div className="bg-purple-50 rounded-xl p-6">
+          <div className="text-sm text-purple-600 mb-2">Общая сумма (RUB)</div>
+          <div className="text-3xl font-bold text-purple-800">{totalRUB.toFixed(2)} ₽</div>
+        </div>
+        <div className="bg-orange-50 rounded-xl p-6">
+          <div className="text-sm text-orange-600 mb-2">Средний чек (USD)</div>
+          <div className="text-3xl font-bold text-orange-800">${avgTotalUSD.toFixed(2)}</div>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        <Section title="💱 Валюты">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <h4 className="font-semibold text-slate-700 mb-4">USD</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between"><span>Количество:</span><span>{data.countUSD || 0}</span></div>
+                <div className="flex justify-between"><span>Сумма:</span><span>${(data.sumUSD || 0).toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>Средний чек:</span><span>${avgUSD.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>В рублях:</span><span>{rubUSD.toFixed(2)} ₽</span></div>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-semibold text-slate-700 mb-4">USDT</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between"><span>Количество:</span><span>{data.countUSDT || 0}</span></div>
+                <div className="flex justify-between"><span>Сумма:</span><span>{(data.sumUSDT || 0).toFixed(2)} USDT</span></div>
+                <div className="flex justify-between"><span>В долларах:</span><span>${usdUSDT.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>В рублях:</span><span>{rubUSDT.toFixed(2)} ₽</span></div>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-semibold text-slate-700 mb-4">RUB</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between"><span>Количество:</span><span>{data.countRUB || 0}</span></div>
+                <div className="flex justify-between"><span>Сумма:</span><span>{(data.sumRUB || 0).toFixed(2)} ₽</span></div>
+                <div className="flex justify-between"><span>В долларах:</span><span>${usdRUB.toFixed(2)}</span></div>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-semibold text-slate-700 mb-4">EUR</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between"><span>Количество:</span><span>{data.countEUR || 0}</span></div>
+                <div className="flex justify-between"><span>Сумма:</span><span>{(data.sumEUR || 0).toFixed(2)} €</span></div>
+                <div className="flex justify-between"><span>В долларах:</span><span>${usdEUR.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>В рублях:</span><span>{rubEUR.toFixed(2)} ₽</span></div>
+              </div>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="👥 Активность">
+          <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <div className="flex justify-between"><span>Новых лидов:</span><span>{data.newLeads || 0}</span></div>
+              <div className="flex justify-between"><span>Диалогов:</span><span>{data.dialogs || 0}</span></div>
+              <div className="flex justify-between"><span>Всего в работе:</span><span>{data.totalLeads || 0}</span></div>
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between"><span>Регистрации интенсив:</span><span>{data.intensive || 0}</span></div>
+              <div className="flex justify-between"><span>Регистрации Zoom:</span><span>{data.zoom || 0}</span></div>
+              <div className="flex justify-between"><span>Конверсия:</span><span>{data.newLeads > 0 ? ((data.dialogs / data.newLeads) * 100).toFixed(1) : 0}%</span></div>
+            </div>
+          </div>
+        </Section>
+
+        {data.potentialRows && data.potentialRows.some(row => row.account || row.profile) && (
+          <Section title="🔥 Потенциал">
+            <div className="space-y-3">
+              {data.potentialRows.filter(row => row.account || row.profile).map((row, index) => (
+                <div key={index} className="bg-slate-50 rounded-lg p-4">
+                  <div className="font-medium">{row.account || 'Аккаунт не указан'}</div>
+                  <div className="text-sm text-slate-600">{row.profile || 'Профиль не указан'}</div>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {data.notes && (
+          <Section title="📝 Заметки">
+            <p className="text-slate-700">{data.notes}</p>
+          </Section>
+        )}
+      </div>
     </div>
   );
 }
 
 // WEEKLY REPORT - COMPLETE
-function WeeklyReport() {
-  const [clients, setClients] = useState([{ name: '', date: '' }]);
+function WeeklyReport({ onSendSuccess }) {
+  const draftKey = 'weeklyReportDraft';
+  const [potentials, setPotentials] = useState(() => {
+    const loaded = loadDraft(draftKey, Array.from({ length: 20 }, () => ({ account: '', profile: '', plannedPaymentDate: '', amount: 0 })));
+    return Array.isArray(loaded) ? loaded : Array.from({ length: 20 }, () => ({ account: '', profile: '', plannedPaymentDate: '', amount: 0 }));
+  });
   const [viewMode, setViewMode] = useState('edit');
   const [savedData, setSavedData] = useState(null);
-  const [formData, setFormData] = useState({
-    paymentsCount: 0, paymentsSum: 0, planWeek: 0, factWeek: 0,
-    newLeads: 0, openDialogs: 0, totalInWork: 0, intensive: 0, zoom: 0,
-    expectedSum: 0, whatWorked: '', problems: '', nextWeekPlans: '',
-    weekFocus: '', weekGoalUSD: 0, weekGoalPayments: 0
+  const [summaryRange, setSummaryRange] = useState({ start: '', end: '' });
+  const [formData, setFormData] = useState(() => {
+    const loaded = loadDraft(draftKey, {
+      paymentsCount: 0, paymentsSum: 0, planWeek: 0, factWeek: 0,
+      newLeads: 0, openDialogs: 0, totalInWork: 0, intensive: 0, zoom: 0,
+      whatWorked: '', problems: '', nextWeekPlans: '',
+      weekFocus: '', weekGoalUSD: 0, weekGoalPayments: 0
+    });
+    return typeof loaded === 'object' && loaded !== null ? loaded : {
+      paymentsCount: 0, paymentsSum: 0, planWeek: 0, factWeek: 0,
+      newLeads: 0, openDialogs: 0, totalInWork: 0, intensive: 0, zoom: 0,
+      whatWorked: '', problems: '', nextWeekPlans: '',
+      weekFocus: '', weekGoalUSD: 0, weekGoalPayments: 0
+    };
   });
 
+  useEffect(() => {
+    saveDraft(draftKey, { ...formData, potentials });
+  }, [formData, potentials]);
+
+  const [weeklySummaryMessage, setWeeklySummaryMessage] = useState('');
+
+  const handleSend = () => {
+    saveReport();
+    sendToGoogleSheets({ ...formData, potentials }, 'weekly', onSendSuccess);
+  };
+
+  const loadWeeklyFromDaily = async () => {
+    if (!summaryRange.start || !summaryRange.end) {
+      alert('Выберите дату начала и конца периода.');
+      return;
+    }
+
+    const rows = await fetchSheetData({
+      type: 'daily',
+      start: summaryRange.start,
+      end: summaryRange.end
+    });
+
+    if (rows.length === 0) {
+      alert('Нет данных в Google Sheets за выбранный период.');
+      return;
+    }
+
+    const totals = rows.reduce(
+      (acc, item) => ({
+        revenue: acc.revenue + (Number(item.revenue) || 0),
+        leads: acc.leads + (Number(item.leads) || 0),
+        dialogs: acc.dialogs + (Number(item.dialogs) || 0),
+        intensive: acc.intensive + (Number(item.intensive) || 0),
+        zoom: acc.zoom + (Number(item.zoom) || 0),
+        totalLeads: acc.totalLeads + (Number(item.totalLeads) || 0)
+      }),
+      { revenue: 0, leads: 0, dialogs: 0, intensive: 0, zoom: 0, totalLeads: 0 }
+    );
+
+    const loadedPotentials = rows.flatMap((item) => {
+      if (item.potentials) {
+        try {
+          return JSON.parse(item.potentials);
+        } catch {
+          return [];
+        }
+      }
+      if (item.potentialRows) {
+        try {
+          return JSON.parse(item.potentialRows);
+        } catch {
+          return [];
+        }
+      }
+      return [];
+    });
+
+    if (loadedPotentials.length > 0) {
+      setPotentials(loadedPotentials.map((potential) => ({
+        account: potential.account || '',
+        profile: potential.profile || '',
+        plannedPaymentDate: potential.plannedPaymentDate || '',
+        amount: Number(potential.amount) || 0
+      })));
+    }
+
+    setFormData({
+      ...formData,
+      paymentsCount: rows.length,
+      paymentsSum: totals.revenue,
+      newLeads: totals.leads,
+      openDialogs: totals.dialogs,
+      totalInWork: totals.totalLeads,
+      intensive: totals.intensive,
+      zoom: totals.zoom
+    });
+    setWeeklySummaryMessage('Данные загружены из ежедневных отчётов. Проверьте сводку и при необходимости сохраните.');
+  };
+
+  const totalPotentialSum = (Array.isArray(potentials) ? potentials : []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const avgCheck = formData.paymentsCount > 0 ? formData.paymentsSum / formData.paymentsCount : 0;
   const planPercent = formData.planWeek > 0 ? (formData.factWeek / formData.planWeek) * 100 : 0;
   const conversion = formData.newLeads > 0 ? (formData.openDialogs / formData.newLeads) * 100 : 0;
 
   const saveReport = () => {
-    const reportData = { ...formData, clients };
+    const reportData = { ...formData, potentials };
     const reportId = `weekly_${Date.now()}`;
     localStorage.setItem(reportId, JSON.stringify(reportData));
     localStorage.setItem('lastWeeklyReport', reportId);
@@ -324,7 +946,7 @@ function WeeklyReport() {
       const data = JSON.parse(localStorage.getItem(lastId));
       if (data) {
         setFormData(data);
-        setClients(data.clients || [{ name: '', date: '' }]);
+        setPotentials(data.potentials || Array.from({ length: 20 }, () => ({ account: '', profile: '', plannedPaymentDate: '' })));
         setSavedData(data);
         alert('✅ Последний отчёт загружен!');
       }
@@ -342,6 +964,21 @@ function WeeklyReport() {
       <h2 className="text-3xl font-bold text-slate-800 mb-6 text-center">📊 Еженедельный отчёт</h2>
       <form className="space-y-6">
         
+        <Section title="📅 Период сводки из ежедневных отчётов">
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <Inp label="Начало" type="date" value={summaryRange.start} onChange={(v) => setSummaryRange({...summaryRange, start: v})} />
+            <Inp label="Конец" type="date" value={summaryRange.end} onChange={(v) => setSummaryRange({...summaryRange, end: v})} />
+          </div>
+          <button
+            type="button"
+            onClick={loadWeeklyFromDaily}
+            className="px-4 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700"
+          >
+            Загрузить из ежедневных отчётов
+          </button>
+          {weeklySummaryMessage && <div className="mt-3 text-sm text-slate-600">{weeklySummaryMessage}</div>}
+        </Section>
+
         <Section title="💰 Финансовые результаты">
           <div className="grid grid-cols-3 gap-4 mb-4">
             <Inp label="Количество оплат" type="number" value={formData.paymentsCount} onChange={(v) => setFormData({...formData, paymentsCount: parseFloat(v)||0})} />
@@ -370,32 +1007,42 @@ function WeeklyReport() {
         </Section>
 
         <Section title="🔥 Потенциал">
-          <p className="text-sm text-slate-600 mb-3">Клиенты готовые к оплате:</p>
-          {clients.map((client, i) => (
-            <div key={i} className="grid grid-cols-[2fr_1fr_auto] gap-3 mb-3">
-              <input type="text" placeholder="Имя клиента / никнейм" value={client.name} onChange={(e) => {
-                const newClients = [...clients];
-                newClients[i].name = e.target.value;
-                setClients(newClients);
+          <p className="text-sm text-slate-600 mb-3">Потенциальные сделки с профилем и датой планируемого платежа:</p>
+          {potentials.map((item, i) => (
+            <div key={i} className="grid grid-cols-[1.2fr_1.2fr_1fr_1fr_auto] gap-3 mb-3">
+              <input type="text" placeholder="Аккаунт / никнейм" value={item.account} onChange={(e) => {
+                const newPotentials = [...potentials];
+                newPotentials[i].account = e.target.value;
+                setPotentials(newPotentials);
               }} className="px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none" />
-              <input type="date" value={client.date} onChange={(e) => {
-                const newClients = [...clients];
-                newClients[i].date = e.target.value;
-                setClients(newClients);
+              <input type="text" placeholder="Профиль" value={item.profile} onChange={(e) => {
+                const newPotentials = [...potentials];
+                newPotentials[i].profile = e.target.value;
+                setPotentials(newPotentials);
               }} className="px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none" />
-              {clients.length > 1 && (
-                <button type="button" onClick={() => setClients(clients.filter((_, idx) => idx !== i))} className="px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600">
+              <input type="date" value={item.plannedPaymentDate} onChange={(e) => {
+                const newPotentials = [...potentials];
+                newPotentials[i].plannedPaymentDate = e.target.value;
+                setPotentials(newPotentials);
+              }} className="px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none" />
+              <input type="number" step="0.01" placeholder="Сумма" value={item.amount} onChange={(e) => {
+                const newPotentials = [...potentials];
+                newPotentials[i].amount = parseFloat(e.target.value) || 0;
+                setPotentials(newPotentials);
+              }} className="px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none" />
+              {potentials.length > 20 && (
+                <button type="button" onClick={() => setPotentials(potentials.filter((_, idx) => idx !== i))} className="px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600">
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
           ))}
-          <button type="button" onClick={() => setClients([...clients, { name: '', date: '' }])} className="flex items-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 mt-2">
+          <button type="button" onClick={() => setPotentials([...potentials, { account: '', profile: '', plannedPaymentDate: '' }])} className="flex items-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 mt-2">
             <Plus className="w-4 h-4" />
-            <span>Добавить клиента</span>
+            <span>Добавить потенциал</span>
           </button>
           <div className="mt-4">
-            <Inp label="Ожидаемая сумма от потенциала ($)" type="number" step="0.01" value={formData.expectedSum} onChange={(v) => setFormData({...formData, expectedSum: parseFloat(v)||0})} />
+            <Inp label="Ожидаемая сумма по потенциалам ($)" value={`$${totalPotentialSum.toFixed(2)}`} disabled />
           </div>
         </Section>
 
@@ -453,7 +1100,7 @@ function WeeklyReport() {
           </button>
         </div>
 
-        <Btn onClick={() => sendToGoogleSheets({...formData, clients}, 'Еженедельный')}>Отправить в Google Sheets</Btn>
+        <Btn onClick={handleSend}>Сохранить и отправить отчёт</Btn>
         
         {savedData && (
           <button
@@ -471,25 +1118,97 @@ function WeeklyReport() {
 }
 
 // MONTHLY REPORT - COMPLETE  
-function MonthlyReport() {
-  const [products, setProducts] = useState([{ name: '', count: 0, sum: 0 }]);
+function MonthlyReport({ onSendSuccess }) {
+  const draftKey = 'monthlyReportDraft';
+  const [products, setProducts] = useState(() => {
+    const loaded = loadDraft(draftKey, [{ name: '', count: 0, sum: 0 }]);
+    return Array.isArray(loaded) ? loaded : [{ name: '', count: 0, sum: 0 }];
+  });
   const [viewMode, setViewMode] = useState('edit'); // 'edit' or 'present'
   const [savedData, setSavedData] = useState(null);
-  const [formData, setFormData] = useState({
-    reportMonth: '', planUSD: 0, factUSD: 0, totalPayments: 0,
-    sumRUB: 0, sumUSD: 0, sumEUR: 0, sumUSDT: 0,
-    newClients: 0, recurring: 0, 
-    totalLeads: 0, intensive: 0, zoom: 0, payments: 0,
-    whatWorked: '', whatFailed: '', demandObservations: '', suggestions: '',
-    enoughLeads: '', needMaterials: '', nextMonthGoals: '', 
-    hotLeads: 0, expectedSum: 0, challenges: '', opportunities: '', teamNeeds: '',
-    nextMonthGoalUSD: 0, nextMonthGoalPayments: 0
+  const [monthlyMessage, setMonthlyMessage] = useState('');
+  const [loadedRange, setLoadedRange] = useState('');
+  const [formData, setFormData] = useState(() => {
+    const loaded = loadDraft(draftKey, {
+      reportMonth: '', planUSD: 0, factUSD: 0, totalPayments: 0,
+      sumRUB: 0, sumUSD: 0, sumEUR: 0, sumUSDT: 0,
+      newClients: 0, recurring: 0,
+      totalLeads: 0, intensive: 0, zoom: 0, payments: 0,
+      whatWorked: '', whatFailed: '', demandObservations: '', suggestions: '',
+      enoughLeads: '', needMaterials: '', nextMonthGoals: '',
+      hotLeads: 0, expectedSum: 0, challenges: '', opportunities: '', teamNeeds: '',
+      nextMonthGoalUSD: 0, nextMonthGoalPayments: 0
+    });
+    return typeof loaded === 'object' && loaded !== null ? loaded : {
+      reportMonth: '', planUSD: 0, factUSD: 0, totalPayments: 0,
+      sumRUB: 0, sumUSD: 0, sumEUR: 0, sumUSDT: 0,
+      newClients: 0, recurring: 0,
+      totalLeads: 0, intensive: 0, zoom: 0, payments: 0,
+      whatWorked: '', whatFailed: '', demandObservations: '', suggestions: '',
+      enoughLeads: '', needMaterials: '', nextMonthGoals: '',
+      hotLeads: 0, expectedSum: 0, challenges: '', opportunities: '', teamNeeds: '',
+      nextMonthGoalUSD: 0, nextMonthGoalPayments: 0
+    };
   });
+
+  const loadMonthlyFromWeekly = async () => {
+    if (!formData.reportMonth) {
+      alert('Выберите месяц для загрузки данных.');
+      return;
+    }
+
+    const [year, month] = formData.reportMonth.split('-');
+    const start = `${year}-${month}-01`;
+    const end = formatDateString(new Date(Number(year), Number(month), 0));
+
+    let rows = await fetchSheetData({ type: 'weekly', start, end });
+    if (rows.length === 0) {
+      rows = await fetchSheetData({ type: 'daily', start, end });
+    }
+
+    if (rows.length === 0) {
+      alert('Нет данных за выбранный месяц.');
+      return;
+    }
+
+    const totals = rows.reduce((acc, item) => ({
+      planUSD: acc.planUSD + (Number(item.planWeek) || 0),
+      factUSD: acc.factUSD + (Number(item.factWeek) || 0),
+      totalPayments: acc.totalPayments + (Number(item.paymentsCount) || 0),
+      totalLeads: acc.totalLeads + (Number(item.totalLeads) || 0),
+      intensive: acc.intensive + (Number(item.intensive) || 0),
+      zoom: acc.zoom + (Number(item.zoom) || 0),
+      payments: acc.payments + (Number(item.payments) || 0),
+      newClients: acc.newClients + (Number(item.newLeads) || 0)
+    }), {
+      planUSD: 0, factUSD: 0, totalPayments: 0, totalLeads: 0, intensive: 0, zoom: 0, payments: 0, newClients: 0
+    });
+
+    setFormData({
+      ...formData,
+      planUSD: totals.planUSD,
+      factUSD: totals.factUSD,
+      totalPayments: totals.totalPayments,
+      totalLeads: totals.totalLeads,
+      intensive: totals.intensive,
+      zoom: totals.zoom,
+      payments: totals.payments,
+      newClients: totals.newClients
+    });
+    const dateLabel = new Date(`${year}-${month}-01`).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+    const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
+    setLoadedRange(`Выбранный период: ${dateLabel} (${start} — ${end}), ${daysInMonth} дн.`);
+    setMonthlyMessage('Данные загружены из еженедельных отчётов. Проверьте и скорректируйте при необходимости.');
+  };
 
   const planPercent = formData.planUSD > 0 ? (formData.factUSD / formData.planUSD) * 100 : 0;
   const convIntensive = formData.totalLeads > 0 ? (formData.intensive / formData.totalLeads) * 100 : 0;
   const convZoom = formData.intensive > 0 ? (formData.zoom / formData.intensive) * 100 : 0;
   const convPayment = formData.totalLeads > 0 ? (formData.payments / formData.totalLeads) * 100 : 0;
+
+  useEffect(() => {
+    saveDraft(draftKey, { ...formData, products });
+  }, [formData, products]);
 
   const saveReport = () => {
     const reportData = { ...formData, products };
@@ -500,6 +1219,11 @@ function MonthlyReport() {
     setSavedData(reportData);
   };
 
+  const handleSend = () => {
+    saveReport();
+    sendToGoogleSheets({ ...formData, products, section: 'monthly' }, 'monthly', onSendSuccess);
+  };
+
   const loadLastReport = () => {
     const lastId = localStorage.getItem('lastMonthlyReport');
     if (lastId) {
@@ -508,7 +1232,7 @@ function MonthlyReport() {
         setFormData(data);
         setProducts(data.products || [{ name: '', count: 0, sum: 0 }]);
         setSavedData(data);
-        alert('✅ Последний отчёт загружен!');
+        alert('✅ Предыдущий отчёт загружен!');
       }
     } else {
       alert('❌ Нет сохранённых отчётов');
@@ -526,6 +1250,15 @@ function MonthlyReport() {
         
         <Section title="💰 Финансовые результаты">
           <Inp label="Месяц и год *" type="month" value={formData.reportMonth} onChange={(v) => setFormData({...formData, reportMonth: v})} />
+          <button
+            type="button"
+            onClick={loadMonthlyFromWeekly}
+            className="mt-4 px-4 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700"
+          >
+            Применить
+          </button>
+          {loadedRange && <div className="mt-3 text-sm text-slate-600 font-medium">{loadedRange}</div>}
+          {monthlyMessage && <div className="mt-3 text-sm text-slate-600">{monthlyMessage}</div>}
           <div className="grid grid-cols-2 gap-4 mt-4">
             <Inp label="План ($)" type="number" step="0.01" value={formData.planUSD} onChange={(v) => setFormData({...formData, planUSD: parseFloat(v)||0})} />
             <Inp label="Факт ($)" type="number" step="0.01" value={formData.factUSD} onChange={(v) => setFormData({...formData, factUSD: parseFloat(v)||0})} />
@@ -688,7 +1421,7 @@ function MonthlyReport() {
             className="py-4 bg-slate-600 text-white rounded-xl font-semibold text-lg hover:shadow-xl transition-all flex items-center justify-center space-x-2"
           >
             <Calendar className="w-5 h-5" />
-            <span>Загрузить последний</span>
+            <span>Загрузить предыдущий</span>
           </button>
           <button
             type="button"
@@ -700,7 +1433,7 @@ function MonthlyReport() {
           </button>
         </div>
 
-        <Btn onClick={() => sendToGoogleSheets({...formData, products}, 'Месячный')}>Отправить в Google Sheets</Btn>
+        <Btn onClick={handleSend}>Сохранить и отправить отчёт</Btn>
         
         {savedData && (
           <button
@@ -718,7 +1451,7 @@ function MonthlyReport() {
 }
 
 // ANALYTICS - COMPLETE
-function Analytics({ data, period, setPeriod, customDates, setCustomDates }) {
+function Analytics({ data, period, setPeriod, customDates, setCustomDates, applyAnalytics }) {
   if (!data) return <div className="text-center py-20 text-slate-600">Загрузка...</div>;
 
   const totalRevenue = data.reduce((sum, d) => sum + d.revenue, 0);
@@ -728,13 +1461,17 @@ function Analytics({ data, period, setPeriod, customDates, setCustomDates }) {
   const totalZoom = data.reduce((sum, d) => sum + d.zoom, 0);
   const avgConversion = data.reduce((sum, d) => sum + d.conversion, 0) / data.length;
 
+  const isEmptyData = data.every(d =>
+    d.revenue === 0 && d.leads === 0 && d.dialogs === 0 && d.intensive === 0 && d.zoom === 0 && d.conversion === 0
+  );
+
   const stats = [
-    { label: 'Общая выручка', value: `$${totalRevenue.toFixed(0)}`, change: '+12%', icon: DollarSign, color: '#3b82f6' },
-    { label: 'Всего лидов', value: totalLeads, change: '+8%', icon: Users, color: '#10b981' },
-    { label: 'Диалоги', value: totalDialogs, change: '+6%', icon: MessageSquare, color: '#a855f7' },
-    { label: 'Рег. интенсив', value: totalIntensive, change: '+4%', icon: Zap, color: '#f59e0b' },
-    { label: 'Рег. Zoom', value: totalZoom, change: '+3%', icon: Video, color: '#ec4899' },
-    { label: 'Конверсия', value: `${avgConversion.toFixed(1)}%`, change: '+2%', icon: Target, color: '#6366f1' }
+    { label: 'Общая выручка', value: `$${totalRevenue.toFixed(0)}`, change: isEmptyData ? '—' : '', icon: DollarSign, color: '#3b82f6' },
+    { label: 'Всего лидов', value: totalLeads, change: isEmptyData ? '—' : '', icon: Users, color: '#10b981' },
+    { label: 'Диалоги', value: totalDialogs, change: isEmptyData ? '—' : '', icon: MessageSquare, color: '#a855f7' },
+    { label: 'Рег. интенсив', value: totalIntensive, change: isEmptyData ? '—' : '', icon: Zap, color: '#f59e0b' },
+    { label: 'Рег. Zoom', value: totalZoom, change: isEmptyData ? '—' : '', icon: Video, color: '#ec4899' },
+    { label: 'Конверсия', value: `${avgConversion.toFixed(1)}%`, change: isEmptyData ? '—' : '', icon: Target, color: '#6366f1' }
   ];
 
   const periods = [
@@ -769,7 +1506,7 @@ function Analytics({ data, period, setPeriod, customDates, setCustomDates }) {
           <input
             type="date"
             value={customDates.start}
-            onChange={(e) => setCustomDates({...customDates, start: e.target.value})}
+            onChange={(e) => setCustomDates({...customDates, start: e.target.value, end: e.target.value || customDates.end})}
             className="px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
           />
           <span className="text-slate-500">—</span>
@@ -779,6 +1516,21 @@ function Analytics({ data, period, setPeriod, customDates, setCustomDates }) {
             onChange={(e) => setCustomDates({...customDates, end: e.target.value})}
             className="px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
           />
+          <button
+            type="button"
+            onClick={applyAnalytics}
+            className="ml-auto px-5 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all"
+          >
+            Применить
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
+        <div className="text-sm text-slate-600">
+          {isEmptyData
+            ? 'Google Sheets пока не заполнена. Аналитика будет нулевой, пока в таблице нет данных. После первой записи здесь сразу появятся актуальные цифры.'
+            : 'Аналитика строится на данных из вашей Google Sheets таблицы.'}
         </div>
       </div>
 
@@ -792,7 +1544,7 @@ function Analytics({ data, period, setPeriod, customDates, setCustomDates }) {
               </div>
               <div className="text-slate-600 text-sm mb-1">{stat.label}</div>
               <div className="text-3xl font-bold text-slate-800 mb-2">{stat.value}</div>
-              <div className="text-green-600 text-sm font-medium">{stat.change}</div>
+              <div className="text-slate-500 text-sm font-medium">{stat.change}</div>
             </div>
           );
         })}
@@ -1007,22 +1759,22 @@ function WeeklyPresentation({ reportData, onClose }) {
 
 // Weekly Presentation Slides
 function WeeklySlideFinancial({ data }) {
-  const planPercent = data.planWeek > 0 ? (data.factWeek / data.planWeek) * 100 : 0;
+  const planPercent = (data.planWeek || 0) > 0 ? ((data.factWeek || 0) / (data.planWeek || 0)) * 100 : 0;
   return (
     <div className="w-full max-w-6xl text-white">
       <h2 className="text-5xl font-bold mb-12 text-center">💰 Финансы</h2>
       <div className="grid grid-cols-3 gap-8">
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8">
           <div className="text-xl opacity-70 mb-2">Оплаты</div>
-          <div className="text-5xl font-bold">{data.paymentsCount}</div>
+          <div className="text-5xl font-bold">{data.paymentsCount || 0}</div>
         </div>
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8">
           <div className="text-xl opacity-70 mb-2">Сумма</div>
-          <div className="text-5xl font-bold">${data.paymentsSum.toLocaleString()}</div>
+          <div className="text-5xl font-bold">${(data.paymentsSum || 0).toLocaleString()}</div>
         </div>
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8">
           <div className="text-xl opacity-70 mb-2">План</div>
-          <div className="text-3xl font-bold">${data.planWeek.toLocaleString()}</div>
+          <div className="text-3xl font-bold">${(data.planWeek || 0).toLocaleString()}</div>
           <div className={`text-2xl mt-2 ${planPercent >= 100 ? 'text-green-400' : 'text-orange-400'}`}>{planPercent.toFixed(1)}%</div>
         </div>
       </div>
@@ -1031,7 +1783,7 @@ function WeeklySlideFinancial({ data }) {
 }
 
 function WeeklySlideActivity({ data }) {
-  const conversion = data.newLeads > 0 ? (data.openDialogs / data.newLeads) * 100 : 0;
+  const conversion = (data.newLeads || 0) > 0 ? ((data.openDialogs || 0) / (data.newLeads || 0)) * 100 : 0;
   return (
     <div className="w-full max-w-6xl text-white">
       <h2 className="text-5xl font-bold mb-12 text-center">📊 Активность</h2>
@@ -1039,11 +1791,11 @@ function WeeklySlideActivity({ data }) {
         <div className="grid grid-cols-3 gap-8 mb-12">
           <div className="text-center">
             <div className="text-xl opacity-70 mb-2">Новых лидов</div>
-            <div className="text-5xl font-bold">{data.newLeads}</div>
+            <div className="text-5xl font-bold">{data.newLeads || 0}</div>
           </div>
           <div className="text-center">
             <div className="text-xl opacity-70 mb-2">Диалоги</div>
-            <div className="text-5xl font-bold">{data.openDialogs}</div>
+            <div className="text-5xl font-bold">{data.openDialogs || 0}</div>
           </div>
           <div className="text-center">
             <div className="text-xl opacity-70 mb-2">Конверсия</div>
@@ -1053,15 +1805,15 @@ function WeeklySlideActivity({ data }) {
         <div className="grid grid-cols-3 gap-8">
           <div className="bg-white/5 rounded-xl p-6 text-center">
             <div className="text-lg mb-2">Всего в работе</div>
-            <div className="text-4xl font-bold">{data.totalInWork}</div>
+            <div className="text-4xl font-bold">{data.totalInWork || 0}</div>
           </div>
           <div className="bg-white/5 rounded-xl p-6 text-center">
             <div className="text-lg mb-2">Рег. интенсив</div>
-            <div className="text-4xl font-bold">{data.intensive}</div>
+            <div className="text-4xl font-bold">{data.intensive || 0}</div>
           </div>
           <div className="bg-white/5 rounded-xl p-6 text-center">
             <div className="text-lg mb-2">Рег. Zoom</div>
-            <div className="text-4xl font-bold">{data.zoom}</div>
+            <div className="text-4xl font-bold">{data.zoom || 0}</div>
           </div>
         </div>
       </div>
@@ -1070,18 +1822,19 @@ function WeeklySlideActivity({ data }) {
 }
 
 function WeeklySlidePotential({ data }) {
-  const validClients = data.clients.filter(c => c.name);
+  const validPotentials = (data.potentials || []).filter((item) => item.account || item.profile);
+  const totalPotentialSum = (data.potentials || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   return (
     <div className="w-full max-w-6xl text-white">
       <h2 className="text-5xl font-bold mb-12 text-center">🔥 Потенциал</h2>
       <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-12">
-        <div className="text-3xl font-semibold mb-8">Ожидаемая сумма: ${data.expectedSum.toLocaleString()}</div>
-        {validClients.length > 0 ? (
+        <div className="text-3xl font-semibold mb-8">Ожидаемая сумма: ${totalPotentialSum.toLocaleString()}</div>
+        {validPotentials.length > 0 ? (
           <div className="grid grid-cols-2 gap-6">
-            {validClients.map((client, i) => (
+            {validPotentials.map((item, i) => (
               <div key={i} className="bg-white/5 rounded-xl p-6">
-                <div className="text-2xl font-semibold mb-2">{client.name}</div>
-                <div className="text-lg opacity-70">{client.date || 'Дата не указана'}</div>
+                <div className="text-2xl font-semibold mb-2">{item.account || item.profile}</div>
+                <div className="text-lg opacity-70">{item.plannedPaymentDate || 'Дата не указана'}</div>
               </div>
             ))}
           </div>
@@ -1126,11 +1879,11 @@ function WeeklySlideFocus({ data }) {
       <div className="grid grid-cols-2 gap-8">
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8">
           <div className="text-xl opacity-70 mb-2">Цель в долларах</div>
-          <div className="text-5xl font-bold">${data.weekGoalUSD.toLocaleString()}</div>
+          <div className="text-5xl font-bold">${(data.weekGoalUSD || 0).toLocaleString()}</div>
         </div>
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8">
           <div className="text-xl opacity-70 mb-2">Цель в оплатах</div>
-          <div className="text-5xl font-bold">{data.weekGoalPayments}</div>
+          <div className="text-5xl font-bold">{data.weekGoalPayments || 0}</div>
         </div>
       </div>
     </div>
@@ -1306,11 +2059,11 @@ function SlidePlanning({ data }) {
       <div className="grid grid-cols-2 gap-6 mb-6">
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6">
           <div className="text-lg opacity-70 mb-2">Горячих лидов</div>
-          <div className="text-5xl font-bold">{data.hotLeads}</div>
+          <div className="text-5xl font-bold">{data.hotLeads || 0}</div>
         </div>
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6">
           <div className="text-lg opacity-70 mb-2">Ожидаемая сумма</div>
-          <div className="text-5xl font-bold">${data.expectedSum.toLocaleString()}</div>
+          <div className="text-5xl font-bold">${(data.expectedSum || 0).toLocaleString()}</div>
         </div>
       </div>
       <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8">

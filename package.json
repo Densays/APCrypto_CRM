@@ -10,6 +10,7 @@
     "recharts": "^2.5.0"
   },
   "scripts": {
+    "dev": "vite",
     "build": "vite build",
     "vercel-build": "npm run build",
     "predeploy": "npm run build",

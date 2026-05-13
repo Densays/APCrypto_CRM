@@ -2,81 +2,174 @@ import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, Calendar, Users, Target, DollarSign, Send, Plus, X, MessageSquare, Video, Zap } from 'lucide-react';
 
-const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwMMJr0ie58lHuRucI6-hTkhhUym44Shy2DsXz_kmBy1k7N-rIBICYlq5Wucibw8zqRPQ/exec';
+const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz81O5PsFvWYTJ2GNklG30I49fbkmArdks5EUzH0eUSvC8rph_FaUiBrhUzF15ueA3n/exec';
+const PAYMENTS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/14sOJxoFt0z3xvjStEt3vHAqJtHg_xudP3qwgBhyf7bM/export?format=csv';
+const PAYMENTS_SHEET_LINK = 'https://docs.google.com/spreadsheets/d/14sOJxoFt0z3xvjStEt3vHAqJtHg_xudP3qwgBhyf7bM/edit?usp=sharing';
+
+const MONTH_NAMES_RU = {
+  '01':'Январь','02':'Февраль','03':'Март','04':'Апрель',
+  '05':'Май','06':'Июнь','07':'Июль','08':'Август',
+  '09':'Сентябрь','10':'Октябрь','11':'Ноябрь','12':'Декабрь'
+};
+
+// Точные индексы колонок «Оплачено факт» (RUB и USDt) по каждому месяцу
+// Определены по структуре таблицы включая скрытые колонки
+const SHEET_FACT_COLS = {
+  '11': { rub: 16, usdt: 17 }, // Ноябрь
+  '12': { rub: 23, usdt: 24 }, // Декабрь
+  '01': { rub: 30, usdt: 31 }, // Январь
+  '02': { rub: 38, usdt: 39 }, // Февраль
+  '03': { rub: 46, usdt: 47 }, // Март
+  '04': { rub: 54, usdt: 55 }, // Апрель
+  '05': { rub: 61, usdt: 62 }, // Май
+};
+
+const parseSimpleCSV = (text) => text.split(/\r?\n/).map(line => {
+  const cols = []; let cur = ''; let inQ = false;
+  for (const ch of line) {
+    if (ch === '"') { inQ = !inQ; }
+    else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
+    else { cur += ch; }
+  }
+  cols.push(cur.trim());
+  return cols;
+});
+
+const parseSheetNum = (val) => {
+  if (!val || /^(#|TRUE|FALSE)/i.test(val)) return 0;
+  return parseFloat(val.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0;
+};
+
+const fetchReconciliation = async (month) => {
+  const [, monthNum] = (month || '').split('-');
+  const monthNameTarget = MONTH_NAMES_RU[monthNum] || '';
+  const cols = SHEET_FACT_COLS[monthNum];
+  if (!cols) return { error: `Месяц «${monthNameTarget || monthNum}» не поддерживается (нет в таблице)` };
+  try {
+    const resp = await fetch(PAYMENTS_SHEET_URL, { mode: 'cors' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const text = await resp.text();
+    const rows = parseSimpleCSV(text);
+    if (rows.length < 4) return { error: 'Таблица пустая или недоступна' };
+
+    const clients = [];
+    let totalRUB = 0, totalUSDt = 0;
+    for (let r = 3; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row[1] || !row[0] || isNaN(parseInt(row[0]))) continue;
+      const rub  = parseSheetNum(row[cols.rub]);
+      const usdt = parseSheetNum(row[cols.usdt]);
+      if (rub > 0 || usdt > 0) {
+        clients.push({ name: row[1], rub, usdt });
+        totalRUB += rub; totalUSDt += usdt;
+      }
+    }
+    return { clients, totalRUB, totalUSDt, monthName: monthNameTarget };
+  } catch (e) {
+    return { error: e.message };
+  }
+};
 
 const sendToGoogleSheets = async (data, type, onComplete) => {
   const reportData = {...data, type, timestamp: new Date().toISOString()};
-  console.log('📤 Отправка данных:', reportData);
-  
-  // ВСЕГДА сохраняем локально сначала
+
+  // Пробуем сразу отправить на сервер через GET (без CORS)
+  // potentialRows сериализуем как JSON-строку для хранения в таблице
   try {
-    const savedReports = JSON.parse(localStorage.getItem('pendingReports') || '[]');
-    savedReports.push(reportData);
-    localStorage.setItem('pendingReports', JSON.stringify(savedReports));
-    console.log('✅ Данные сохранены локально');
+    const { potentials, ...serverData } = reportData;
+    if (serverData.potentialRows && Array.isArray(serverData.potentialRows)) {
+      serverData.potentialRows = JSON.stringify(serverData.potentialRows.filter(r => r.account || r.profile));
+    }
+    const encoded = encodeURIComponent(JSON.stringify(serverData));
+    const url = `${GOOGLE_SCRIPT_URL}?action=save&data=${encoded}`;
+    const response = await fetch(url, { method: 'GET', mode: 'cors' });
+    if (response.ok) {
+      const result = await response.json();
+      if (result.status === 'ok') {
+        // Успешно — кладём в локальный кеш (для офлайн аналитики)
+        try {
+          const cache = JSON.parse(localStorage.getItem('localReportsCache') || '[]');
+          cache.push(reportData);
+          localStorage.setItem('localReportsCache', JSON.stringify(cache));
+        } catch (_) {}
+        alert('✅ Отчёт сохранён и синхронизирован!');
+        if (typeof onComplete === 'function') onComplete();
+        return;
+      }
+    }
   } catch (e) {
-    console.warn('⚠️ Не удалось сохранить локально:', e.message);
+    console.warn('⚠️ Не удалось отправить:', e.message);
   }
 
-  // Показываем пользователю успешное сохранение
-  alert('✅ Отчет сохранен! Данные отправляются в Google Sheets...');
-  
-  // В фоне пытаемся отправить на сервер (не блокируем UI)
-  (async () => {
-    // Попытка 1: Обычный fetch с CORS
-    try {
-      console.log('📤 Попытка 1: Стандартный POST запрос');
-      const response = await fetch(GOOGLE_SCRIPT_URL, {
-        method: 'POST',
-        mode: 'cors',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(reportData)
-      });
-      if (response.ok) {
-        console.log('✅ Данные успешно отправлены на сервер!');
-        return;
-      }
-    } catch (e) {
-      console.warn('⚠️ Попытка 1 не удалась:', e.message);
-    }
+  // Не удалось — кладём в очередь на повтор и в локальный кеш
+  try {
+    const pending = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+    pending.push(reportData);
+    localStorage.setItem('pendingReports', JSON.stringify(pending));
+    const cache = JSON.parse(localStorage.getItem('localReportsCache') || '[]');
+    cache.push(reportData);
+    localStorage.setItem('localReportsCache', JSON.stringify(cache));
+  } catch (e) {
+    console.warn('⚠️ Ошибка localStorage:', e.message);
+  }
 
-    // Попытка 2: FormData
-    try {
-      console.log('📤 Попытка 2: FormData метод');
-      const formData = new FormData();
-      formData.append('data', JSON.stringify(reportData));
-      const response = await fetch(GOOGLE_SCRIPT_URL, {
-        method: 'POST',
-        mode: 'cors',
-        body: formData
-      });
-      if (response.ok) {
-        console.log('✅ FormData отправка успешна!');
-        return;
-      }
-    } catch (e) {
-      console.warn('⚠️ Попытка 2 не удалась:', e.message);
-    }
-
-    // Попытка 3: no-cors mode (отправляет но браузер не может проверить результат)
-    try {
-      console.log('📤 Попытка 3: no-cors режим');
-      await fetch(GOOGLE_SCRIPT_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(reportData)
-      });
-      console.log('ℹ️ Данные отправлены в режиме no-cors (результат может быть недоступен)');
-      return;
-    } catch (e) {
-      console.warn('⚠️ Попытка 3 не удалась:', e.message);
-    }
-
-    console.log('ℹ️ Не удалось отправить на сервер, но данные сохранены локально');
-  })();
-
+  alert('✅ Отчёт сохранён локально. Будет синхронизирован при следующем подключении.');
   if (typeof onComplete === 'function') onComplete();
+};
+
+const fetchBybitRates = async () => {
+  let usdRub = null;
+  let source = '';
+
+  // Попытка 1: Bybit P2P (может не работать из-за CORS в некоторых браузерах)
+  try {
+    const p2pResp = await fetch('https://api2.bybit.com/fiat/otc/item/online', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tokenId: 'USDT', currencyId: 'RUB',
+        payment: [], side: '1', size: '20', page: '1', amount: ''
+      })
+    });
+    const p2p = await p2pResp.json();
+    const items = p2p?.result?.items;
+    if (items?.length) {
+      const prices = items.map(i => parseFloat(i.price)).filter(Boolean);
+      if (prices.length) {
+        usdRub = Math.round((prices.reduce((a, b) => a + b, 0) / prices.length) * 100) / 100;
+        source = 'Bybit P2P';
+      }
+    }
+  } catch (_) {}
+
+  // Попытка 2: CoinGecko (всегда работает из браузера)
+  if (!usdRub) {
+    const cgResp = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=rub');
+    const cg = await cgResp.json();
+    usdRub = cg?.tether?.rub;
+    if (!usdRub) throw new Error('Не удалось получить курс ни с Bybit P2P, ни с CoinGecko');
+    source = 'CoinGecko';
+  }
+
+  // EUR/RUB через Bybit spot, иначе CoinGecko
+  let eurRub = null;
+  try {
+    const eurResp = await fetch('https://api.bybit.com/v5/market/tickers?category=spot&symbol=EURUSDT');
+    const eur = await eurResp.json();
+    const eurUsdt = parseFloat(eur?.result?.list?.[0]?.lastPrice);
+    if (eurUsdt) eurRub = Math.round(eurUsdt * usdRub * 100) / 100;
+  } catch (_) {}
+  if (!eurRub) {
+    try {
+      const cgEurResp = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=rub,eur');
+      const cgEur = await cgEurResp.json();
+      const rubPerUsdt = cgEur?.tether?.rub;
+      const eurPerUsdt = cgEur?.tether?.eur;
+      if (rubPerUsdt && eurPerUsdt) eurRub = Math.round((rubPerUsdt / eurPerUsdt) * 100) / 100;
+    } catch (_) {}
+  }
+
+  return { usdRub, eurRub, source };
 };
 
 const fetchSheetData = async (params) => {
@@ -230,34 +323,30 @@ const fetchAnalyticsData = async (days, customDates) => {
     console.log('📅 Загрузка данных за', days, 'дней:', start, '-', end);
   }
 
-  // Сначала пытаемся загрузить с сервера
-  const serverRows = await fetchSheetData({
-    type: 'daily',
-    start,
-    end
-  });
-
+  // Загружаем с сервера (единый источник правды для всех устройств)
+  const serverRows = await fetchSheetData({ type: 'daily', start, end });
   console.log('📊 Получено записей с сервера:', serverRows.length);
 
-  // Если с сервера ничего не пришло - ищем локальные данные
-  let rows = serverRows;
-  if (rows.length === 0) {
-    console.log('ℹ️ Нет данных с сервера, загружаю локальные данные');
-    try {
-      const pendingReports = JSON.parse(localStorage.getItem('pendingReports') || '[]');
-      rows = pendingReports.filter(report => {
-        if (report.type !== 'daily') return false;
-        const reportDate = report.reportDate || report.date;
-        if (!reportDate) return false;
-        if (start && reportDate < start) return false;
-        if (end && reportDate > end) return false;
-        return true;
-      });
-      console.log('📊 Загружено локальных записей:', rows.length);
-    } catch (e) {
-      console.warn('⚠️ Не удалось загрузить локальные данные:', e.message);
-    }
+  // Локальный кеш — только для дат которых нет на сервере (офлайн fallback)
+  let localRows = [];
+  try {
+    const cache = JSON.parse(localStorage.getItem('localReportsCache') || '[]');
+    const pending = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+    const allLocal = [...cache, ...pending];
+    const serverDates = new Set(serverRows.map(r => r.reportDate || r.date).filter(Boolean));
+    localRows = allLocal.filter(r => {
+      if (r.type !== 'daily') return false;
+      const d = r.reportDate || r.date;
+      if (!d || d < start || d > end) return false;
+      return !serverDates.has(d); // только то, чего нет на сервере
+    });
+    console.log('📊 Локальных (не на сервере):', localRows.length);
+  } catch (e) {
+    console.warn('⚠️ Локальные данные:', e.message);
   }
+
+  const rows = [...serverRows, ...localRows];
+  console.log('📊 Итого:', rows.length);
 
   if (rows.length === 0) {
     console.log('⚠️ Нет данных, генерирую нулевые данные');
@@ -274,27 +363,46 @@ const fetchAnalyticsData = async (days, customDates) => {
     }
     if (!aggregated[date]) {
       aggregated[date] = {
-        date,
-        revenue: 0,
-        leads: 0,
-        dialogs: 0,
-        intensive: 0,
-        zoom: 0,
-        conversion: 0,
-        totalLeads: 0
+        date, revenue: 0, leads: 0, dialogs: 0,
+        intensive: 0, zoom: 0, payments: 0,
+        newPayments: 0, recurPayments: 0,
+        newRevenue: 0, recurRevenue: 0,
+        conversion: 0, totalLeads: 0
       };
     }
-    aggregated[date].revenue += Number(row.totalUSD) || 0;
-    aggregated[date].leads += Number(row.newLeads) || 0;
-    aggregated[date].dialogs += Number(row.dialogs) || 0;
-    aggregated[date].intensive += Number(row.intensive) || 0;
-    aggregated[date].zoom += Number(row.zoom) || 0;
-    aggregated[date].totalLeads += Number(row.totalLeads) || 0;
+    const rowTotalUSD = row.totalUSD !== undefined && row.totalUSD !== ''
+      ? Number(row.totalUSD)
+      : (() => {
+          const { rateUSD = 0, rateUSDT = 1, rateEUR = 0, sumUSD = 0, sumUSDT = 0, sumRUB = 0, sumEUR = 0 } = row;
+          return (parseFloat(sumUSD) || 0)
+            + (sumUSDT * rateUSDT)
+            + (rateUSD > 0 ? sumRUB / rateUSD : 0)
+            + (rateUSD > 0 ? (sumEUR * rateEUR) / rateUSD : 0);
+        })();
+    const rowNewPayments = (Number(row.newCountUSD)||0)+(Number(row.newCountUSDT)||0)+(Number(row.newCountRUB)||0)+(Number(row.newCountEUR)||0);
+    const rowRecurPayments = (Number(row.recurCountUSD)||0)+(Number(row.recurCountUSDT)||0)+(Number(row.recurCountRUB)||0)+(Number(row.recurCountEUR)||0);
+    const rowPayments = rowNewPayments + rowRecurPayments
+      || (Number(row.countUSD)||0)+(Number(row.countUSDT)||0)+(Number(row.countRUB)||0)+(Number(row.countEUR)||0)
+      || (Number(row.totalCount)||0);
+    const rowNewRevenue   = Number(row.newTotalUSD)   || 0;
+    const rowRecurRevenue = Number(row.recurTotalUSD) || 0;
+
+    aggregated[date].revenue       += rowTotalUSD;
+    aggregated[date].payments      += rowPayments;
+    aggregated[date].newPayments   += rowNewPayments;
+    aggregated[date].recurPayments += rowRecurPayments;
+    aggregated[date].newRevenue    += rowNewRevenue;
+    aggregated[date].recurRevenue  += rowRecurRevenue;
+    aggregated[date].leads         += Number(row.newLeads) || 0;
+    aggregated[date].dialogs       += Number(row.dialogs) || 0;
+    aggregated[date].intensive     += Number(row.intensive) || 0;
+    aggregated[date].zoom          += Number(row.zoom) || 0;
+    aggregated[date].totalLeads    += Number(row.totalLeads) || 0;
   });
 
   const result = Object.values(aggregated).map(item => ({
     ...item,
-    conversion: item.leads > 0 ? (item.revenue / item.leads) * 100 : 0
+    conversion: item.leads > 0 ? (item.payments / item.leads) * 100 : 0
   })).sort((a, b) => new Date(a.date) - new Date(b.date));
 
   console.log('✅ Агрегировано записей:', result.length);
@@ -313,61 +421,47 @@ export default function CRMDashboard() {
 
   const refreshAnalytics = () => setAnalyticsRefreshKey((value) => value + 1);
   const applyAnalytics = () => setAnalyticsQuery({ period, customDates });
+  const setPeriodAndApply = (days) => { setPeriod(days); setAnalyticsQuery({ period: days, customDates }); };
 
-  // Попытка отправить сохраненные данные при загрузке приложения
+  // Фоновая синхронизация несинхронизированных отчётов
   useEffect(() => {
     const retryPendingReports = async () => {
       try {
-        const pendingReports = JSON.parse(localStorage.getItem('pendingReports') || '[]');
-        if (pendingReports.length === 0) {
-          console.log('✅ Нет сохраненных отчетов для отправки');
-          return;
-        }
+        const pending = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+        if (pending.length === 0) return;
 
-        console.log(`📤 Попытка отправить ${pendingReports.length} сохраненных отчетов`);
-        
-        let successCount = 0;
-        for (const report of pendingReports) {
+        const failed = [];
+        for (const report of pending) {
           try {
-            const response = await fetch(GOOGLE_SCRIPT_URL, {
-              method: 'POST',
-              mode: 'cors',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(report)
-            });
-            
-            if (response && response.ok) {
-              console.log('✅ Отправлен сохраненный отчет:', report);
-              successCount++;
-            } else {
-              console.warn('⚠️ Сервер ответил с ошибкой, сохраненный отчет не отправлен');
+            const { potentials, ...serverData } = report;
+            if (serverData.potentialRows && Array.isArray(serverData.potentialRows)) {
+              serverData.potentialRows = JSON.stringify(serverData.potentialRows.filter(r => r.account || r.profile));
             }
-          } catch (e) {
-            console.warn('⚠️ Не удалось отправить сохраненный отчет:', e.message);
-          }
+            const encoded = encodeURIComponent(JSON.stringify(serverData));
+            const url = `${GOOGLE_SCRIPT_URL}?action=save&data=${encoded}`;
+            const response = await fetch(url, { method: 'GET', mode: 'cors' });
+            if (response && response.ok) {
+              const result = await response.json();
+              if (result.status === 'ok') {
+                // Успешно отправлено — сохраняем в локальный кеш, удаляем из очереди
+                const cache = JSON.parse(localStorage.getItem('localReportsCache') || '[]');
+                cache.push(report);
+                localStorage.setItem('localReportsCache', JSON.stringify(cache));
+                console.log('✅ Синхронизирован:', report.reportDate || report.timestamp);
+                continue;
+              }
+            }
+          } catch (_) {}
+          failed.push(report); // не удалось — оставляем в очереди
         }
-
-        // Очистить только успешно отправленные отчеты
-        if (successCount > 0) {
-          try {
-            localStorage.removeItem('pendingReports');
-            console.log(`✅ Очищены ${successCount} отправленных отчетов`);
-          } catch (e) {
-            console.warn('⚠️ Не удалось очистить сохраненные отчеты');
-          }
-        } else {
-          console.log('ℹ️ Отчеты не отправлены, сохраняю их на потом');
-        }
+        localStorage.setItem('pendingReports', JSON.stringify(failed));
       } catch (e) {
-        console.warn('⚠️ Ошибка при проверке сохраненных отчетов:', e.message);
+        console.warn('⚠️ Ошибка синхронизации:', e.message);
       }
     };
 
-    // Отправить при загрузке приложения
     retryPendingReports();
-
-    // Также повторять попытку каждые 30 сек
-    const interval = setInterval(retryPendingReports, 30000);
+    const interval = setInterval(retryPendingReports, 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -384,10 +478,11 @@ export default function CRMDashboard() {
 
 
   const tabs = [
-    { id: 'daily', label: 'Ежедневный', icon: Calendar },
-    { id: 'weekly', label: 'Еженедельный', icon: BarChart },
-    { id: 'monthly', label: 'Месячный', icon: TrendingUp },
-    { id: 'analytics', label: 'Аналитика', icon: Target }
+    { id: 'daily',    label: 'Ежедневный',   icon: Calendar },
+    { id: 'weekly',   label: 'Еженедельный', icon: BarChart },
+    { id: 'monthly',  label: 'Месячный',     icon: TrendingUp },
+    { id: 'analytics',label: 'Аналитика',    icon: Target },
+    { id: 'reports',  label: 'Отчёты',       icon: Users }
   ];
 
   return (
@@ -405,6 +500,43 @@ export default function CRMDashboard() {
               <span className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                 CRM APCRYPTO
               </span>
+              <button
+                type="button"
+                onClick={async () => {
+                  let msg = '';
+                  // localStorage
+                  try {
+                    const reports = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+                    const byType = {};
+                    reports.forEach(r => { byType[r.type] = (byType[r.type]||0)+1; });
+                    const dates = reports.filter(r=>r.type==='daily').map(r=>r.reportDate||r.date||'?').slice(-5).join(', ');
+                    msg += `📦 localStorage\n`;
+                    msg += `Всего: ${reports.length} (daily:${byType.daily||0} weekly:${byType.weekly||0} monthly:${byType.monthly||0})\n`;
+                    msg += `Последние даты: ${dates||'нет'}\n\n`;
+                  } catch(e) { msg += `localStorage ошибка: ${e.message}\n\n`; }
+                  // Google Sheets
+                  try {
+                    const today = new Date();
+                    const end = today.toISOString().split('T')[0];
+                    const start = new Date(today-30*864e5).toISOString().split('T')[0];
+                    const resp = await fetch(`${GOOGLE_SCRIPT_URL}?type=daily&start=${start}&end=${end}`);
+                    if (resp.ok) {
+                      const data = await resp.json();
+                      const lastDate = Array.isArray(data) && data.length ? data[data.length-1].reportDate : '—';
+                      msg += `☁️ Google Sheets\n`;
+                      msg += `Статус: ✅ подключено\n`;
+                      msg += `Записей за 30 дней: ${Array.isArray(data)?data.length:'err'}\n`;
+                      msg += `Последняя дата: ${lastDate}`;
+                    } else {
+                      msg += `☁️ Google Sheets\nСтатус: ❌ HTTP ${resp.status}`;
+                    }
+                  } catch(e) { msg += `☁️ Google Sheets\nСтатус: ❌ ${e.message}`; }
+                  alert(msg);
+                }}
+                className="ml-2 px-2 py-1 text-xs bg-slate-100 text-slate-500 rounded hover:bg-slate-200"
+              >
+                🔍 debug
+              </button>
             </div>
             <div className="flex space-x-1">
               {tabs.map(tab => {
@@ -432,7 +564,154 @@ export default function CRMDashboard() {
         {activeTab === 'weekly' && <WeeklyReport onSendSuccess={refreshAnalytics} />}
         {activeTab === 'monthly' && <MonthlyReport onSendSuccess={refreshAnalytics} />}
         {activeTab === 'analytics' && (
-          <Analytics data={analyticsData} period={period} setPeriod={setPeriod} customDates={customDates} setCustomDates={setCustomDates} applyAnalytics={applyAnalytics} />
+          <Analytics data={analyticsData} period={period} setPeriod={setPeriodAndApply} customDates={customDates} setCustomDates={setCustomDates} applyAnalytics={applyAnalytics} />
+        )}
+        {activeTab === 'reports' && <ReportsList onRefresh={refreshAnalytics} />}
+      </div>
+    </div>
+  );
+}
+
+// REPORTS LIST
+function ReportsList({ onRefresh }) {
+  const [serverReports, setServerReports] = useState([]);
+  const [serverLoading, setServerLoading] = useState(false);
+  const [restoreStatus, setRestoreStatus] = useState('');
+  const [pendingReports, setPendingReports] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pendingReports') || '[]'); } catch { return []; }
+  });
+  const [cacheReports] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('localReportsCache') || '[]'); } catch { return []; }
+  });
+
+  const loadServerReports = async () => {
+    setServerLoading(true);
+    try {
+      const today = new Date();
+      const end = today.toISOString().split('T')[0];
+      const start = new Date(today - 180 * 864e5).toISOString().split('T')[0];
+      const resp = await fetch(`${GOOGLE_SCRIPT_URL}?type=daily&start=${start}&end=${end}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setServerReports(Array.isArray(data) ? data : []);
+      }
+    } catch (e) { console.warn('Ошибка загрузки:', e.message); }
+    setServerLoading(false);
+  };
+
+  useEffect(() => { loadServerReports(); }, []);
+
+  // Восстановление: переотправить все данные из локального кеша на сервер
+  const restoreFromCache = async () => {
+    const all = [...cacheReports, ...pendingReports];
+    if (all.length === 0) { setRestoreStatus('Локальный кеш пуст'); return; }
+    setRestoreStatus(`Отправка ${all.length} отчётов...`);
+    let ok = 0, fail = 0;
+    for (const report of all) {
+      try {
+        const { potentialRows, potentials, ...serverData } = report;
+        const encoded = encodeURIComponent(JSON.stringify(serverData));
+        const resp = await fetch(`${GOOGLE_SCRIPT_URL}?action=save&data=${encoded}`);
+        if (resp.ok) { const r = await resp.json(); if (r.status === 'ok') { ok++; continue; } }
+      } catch (_) {}
+      fail++;
+    }
+    setRestoreStatus(`✅ Восстановлено: ${ok}, ошибок: ${fail}`);
+    await loadServerReports();
+    onRefresh?.();
+  };
+
+  const deletePending = (idx) => {
+    if (!confirm('Удалить этот несинхронизированный отчёт?')) return;
+    const updated = pendingReports.filter((_, i) => i !== idx);
+    localStorage.setItem('pendingReports', JSON.stringify(updated));
+    setPendingReports(updated);
+    onRefresh?.();
+  };
+
+  const typeLabel = { daily: 'Ежедневный', weekly: 'Еженедельный', monthly: 'Месячный' };
+  const typeColor = { daily: 'bg-blue-100 text-blue-700', weekly: 'bg-purple-100 text-purple-700', monthly: 'bg-green-100 text-green-700' };
+
+  const renderRow = (r, idx, synced, onDelete) => {
+    const date = r.reportDate || r.date || '—';
+    const totalUSD = r.totalUSD ?? ((parseFloat(r.sumUSD)||0) + ((r.sumUSDT||0)*(r.rateUSDT||1)) + ((r.rateUSD>0)?(r.sumRUB||0)/r.rateUSD:0));
+    return (
+      <div key={idx} className={`flex items-center gap-3 p-4 rounded-xl border-2 ${synced ? 'border-green-100 bg-green-50' : 'border-orange-200 bg-orange-50'}`}>
+        <span className={`text-xs font-bold px-2 py-1 rounded shrink-0 ${synced ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+          {synced ? '☁️ синхр.' : '⏳ ожидает'}
+        </span>
+        <div className={`text-xs font-semibold px-2 py-1 rounded shrink-0 ${typeColor[r.type] || 'bg-slate-100 text-slate-600'}`}>
+          {typeLabel[r.type] || r.type}
+        </div>
+        <div className="font-semibold text-slate-800 w-28 shrink-0">{date}</div>
+        <div className="flex-1 text-sm text-slate-600 flex flex-wrap gap-3">
+          {r.type === 'daily' && <><span>💰 ${Number(totalUSD).toFixed(0)}</span><span>👥 {r.newLeads||0} лидов</span><span>💬 {r.dialogs||0} диал.</span></>}
+          {r.type === 'weekly' && <><span>💰 ${(r.paymentsSum||0)}</span><span>💳 {r.paymentsCount||0} оплат</span></>}
+        </div>
+        <div className="text-xs text-slate-400 shrink-0">{r.timestamp ? new Date(r.timestamp).toLocaleString('ru-RU') : ''}</div>
+        {onDelete && (
+          <button onClick={() => onDelete(idx)} className="shrink-0 w-8 h-8 flex items-center justify-center bg-red-100 text-red-600 rounded-lg hover:bg-red-200">
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const deleteServerReport = async (r) => {
+    const date = r.reportDate || r.date;
+    const type = r.type || 'daily';
+    if (!confirm(`Удалить отчёт за ${date} из Google Sheets?`)) return;
+    try {
+      const resp = await fetch(`${GOOGLE_SCRIPT_URL}?action=delete&type=${type}&date=${date}`);
+      if (resp.ok) {
+        const result = await resp.json();
+        if (result.status === 'ok') {
+          setServerReports(prev => prev.filter(x => (x.reportDate || x.date) !== date));
+          onRefresh?.();
+          return;
+        }
+        alert('Ошибка: ' + (result.error || 'неизвестно'));
+      }
+    } catch (e) { alert('Ошибка удаления: ' + e.message); }
+  };
+
+  const allSorted = [...serverReports].sort((a,b) => (b.reportDate||'') > (a.reportDate||'') ? 1 : -1);
+
+  return (
+    <div className="bg-white rounded-2xl shadow-xl p-6 max-w-5xl mx-auto space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h2 className="text-2xl font-bold text-slate-800">📋 Отчёты</h2>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={loadServerReports} disabled={serverLoading} className="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm hover:bg-slate-200 disabled:opacity-50">
+            {serverLoading ? 'Загрузка...' : '🔄 Обновить'}
+          </button>
+          <button onClick={restoreFromCache} className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
+            ♻️ Восстановить из кеша ({cacheReports.length + pendingReports.length})
+          </button>
+        </div>
+      </div>
+      {restoreStatus && <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-sm text-indigo-800">{restoreStatus}</div>}
+
+      {pendingReports.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-orange-700 mb-2">⏳ Не синхронизированы ({pendingReports.length})</h3>
+          <div className="space-y-2">
+            {pendingReports.map((r, i) => renderRow(r, i, false, deletePending))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <h3 className="text-sm font-semibold text-green-700 mb-2">☁️ Google Sheets — последние 90 дней ({allSorted.length})</h3>
+        {serverLoading ? (
+          <div className="text-center py-8 text-slate-400">Загрузка...</div>
+        ) : allSorted.length === 0 ? (
+          <div className="text-center py-8 text-slate-400">Нет данных на сервере</div>
+        ) : (
+          <div className="space-y-2">
+            {allSorted.map((r, i) => renderRow(r, i, true, () => deleteServerReport(r)))}
+          </div>
         )}
       </div>
     </div>
@@ -442,6 +721,13 @@ export default function CRMDashboard() {
 // DAILY REPORT - COMPLETE
 function DailyReport({ onSendSuccess }) {
   const draftKey = 'dailyReportDraft';
+  const [paymentTab, setPaymentTab] = useState('new'); // 'new' | 'recur'
+  const defaultPayFields = {
+    newCountUSD: 0, newSumUSD: 0, newCountUSDT: 0, newSumUSDT: 0,
+    newCountRUB: 0, newSumRUB: 0, newCountEUR: 0, newSumEUR: 0,
+    recurCountUSD: 0, recurSumUSD: 0, recurCountUSDT: 0, recurSumUSDT: 0,
+    recurCountRUB: 0, recurSumRUB: 0, recurCountEUR: 0, recurSumEUR: 0,
+  };
   const [formData, setFormData] = useState(() => {
     const loaded = loadDraft(draftKey, {
       reportDate: formatDateString(new Date()),
@@ -450,18 +736,19 @@ function DailyReport({ onSendSuccess }) {
       countUSDT: 0, sumUSDT: 0,
       countRUB: 0, sumRUB: 0,
       countEUR: 0, sumEUR: 0,
-      newLeads: 0, dialogs: 0, totalLeads: 0,
+      ...defaultPayFields,
+      newLeads: 0, dialogs: 0, totalLeads: 0, intensive: 0, zoom: 0,
       potentialRows: Array.from({ length: 6 }, () => ({ account: '', profile: '' })),
       notes: ''
     });
-    return typeof loaded === 'object' && loaded !== null ? loaded : {
+    return typeof loaded === 'object' && loaded !== null ? { ...defaultPayFields, ...loaded } : {
       reportDate: formatDateString(new Date()),
       rateUSD: 95, rateEUR: 103, rateUSDT: 1,
       countUSD: 0, sumUSD: 0,
       countUSDT: 0, sumUSDT: 0,
       countRUB: 0, sumRUB: 0,
       countEUR: 0, sumEUR: 0,
-      newLeads: 0, dialogs: 0, totalLeads: 0,
+      newLeads: 0, dialogs: 0, totalLeads: 0, intensive: 0, zoom: 0,
       potentialRows: Array.from({ length: 6 }, () => ({ account: '', profile: '' })),
       notes: ''
     };
@@ -472,6 +759,28 @@ function DailyReport({ onSendSuccess }) {
   }, [formData]);
 
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [ratesLoading, setRatesLoading] = useState(false);
+
+  const [ratesSource, setRatesSource] = useState('');
+
+  const fillRatesFromBybit = async () => {
+    setRatesLoading(true);
+    setRatesSource('');
+    try {
+      const { usdRub, eurRub, source } = await fetchBybitRates();
+      setFormData(prev => ({
+        ...prev,
+        rateUSD: usdRub,
+        rateUSDT: 1,
+        ...(eurRub ? { rateEUR: eurRub } : {})
+      }));
+      setRatesSource(source);
+    } catch (e) {
+      alert('Не удалось получить курс: ' + e.message);
+    }
+    setRatesLoading(false);
+  };
+
   const [lastSavedData, setLastSavedData] = useState(() => {
     const raw = window.localStorage.getItem('lastDailyReport');
     return raw ? JSON.parse(raw) : null;
@@ -482,6 +791,59 @@ function DailyReport({ onSendSuccess }) {
     window.localStorage.setItem('lastDailyReport', JSON.stringify(reportData));
     saveDraft(draftKey, reportData);
     setLastSavedData(reportData);
+  };
+
+  const loadReportByDate = async () => {
+    if (!formData.reportDate) { alert('Выберите дату.'); return; }
+    const date = formData.reportDate;
+
+    // 1. Сначала ищем в localStorage
+    try {
+      const all = [
+        ...JSON.parse(localStorage.getItem('localReportsCache') || '[]'),
+        ...JSON.parse(localStorage.getItem('pendingReports') || '[]'),
+      ];
+      const found = all.filter(r => r.type === 'daily' && (r.reportDate || r.date) === date);
+      if (found.length > 0) {
+        const { type, timestamp, section, ...data } = found[found.length - 1];
+        setFormData({ ...data, reportDate: date });
+        alert(`✅ Загружен отчёт за ${date} (локальный кеш)`);
+        return;
+      }
+    } catch (_) {}
+
+    // 2. Запрашиваем с сервера
+    try {
+      const resp = await fetch(`${GOOGLE_SCRIPT_URL}?type=daily&start=${date}&end=${date}`);
+      if (resp.ok) {
+        const rows = await resp.json();
+        if (Array.isArray(rows) && rows.length > 0) {
+          const r = rows[0];
+          setFormData(prev => ({
+            ...prev,
+            reportDate: date,
+            rateUSD:   Number(r.rateUSD)   || prev.rateUSD,
+            rateEUR:   Number(r.rateEUR)   || prev.rateEUR,
+            rateUSDT:  Number(r.rateUSDT)  || prev.rateUSDT,
+            totalUSD:  Number(r.totalUSD)  || 0,
+            countUSD:  Number(r.countUSD)  || 0, sumUSD:  Number(r.sumUSD)  || 0,
+            countUSDT: Number(r.countUSDT) || 0, sumUSDT: Number(r.sumUSDT) || 0,
+            countRUB:  Number(r.countRUB)  || 0, sumRUB:  Number(r.sumRUB)  || 0,
+            countEUR:  Number(r.countEUR)  || 0, sumEUR:  Number(r.sumEUR)  || 0,
+            newLeads:  Number(r.newLeads)  || 0,
+            dialogs:   Number(r.dialogs)   || 0,
+            totalLeads:Number(r.totalLeads)|| 0,
+            notes:     r.notes || '',
+          }));
+          alert(`✅ Загружен отчёт за ${date} (Google Sheets)`);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Ошибка загрузки с сервера:', e.message);
+    }
+
+    alert(`Нет сохранённых отчётов за ${date}`);
   };
 
   const loadLastReport = () => {
@@ -496,41 +858,50 @@ function DailyReport({ onSendSuccess }) {
     alert('✅ Предыдущий отчёт загружен');
   };
 
-  const handleSend = () => {
-    saveReport();
-    sendToGoogleSheets({ ...formData, section: 'daily' }, 'daily', onSendSuccess);
-    setSummaryOpen(true);
-  };
-
   const calc = () => {
-    const { rateUSD, rateEUR, rateUSDT, countUSD, sumUSD, countUSDT, sumUSDT, countRUB, sumRUB, countEUR, sumEUR } = formData;
-    
-    // USD
-    const avgUSD = countUSD > 0 ? sumUSD / countUSD : 0;
-    const rubUSD = sumUSD * rateUSD;
-    
-    // USDT
+    const r = formData;
+    const { rateUSD = 95, rateEUR = 103, rateUSDT = 1 } = r;
+
+    // Суммируем новые + рекуррентные платежи в каждой валюте
+    const countUSD  = (r.newCountUSD||0)  + (r.recurCountUSD||0);
+    const sumUSD    = (r.newSumUSD||0)    + (r.recurSumUSD||0);
+    const countUSDT = (r.newCountUSDT||0) + (r.recurCountUSDT||0);
+    const sumUSDT   = (r.newSumUSDT||0)   + (r.recurSumUSDT||0);
+    const countRUB  = (r.newCountRUB||0)  + (r.recurCountRUB||0);
+    const sumRUB    = (r.newSumRUB||0)    + (r.recurSumRUB||0);
+    const countEUR  = (r.newCountEUR||0)  + (r.recurCountEUR||0);
+    const sumEUR    = (r.newSumEUR||0)    + (r.recurSumEUR||0);
+
+    const avgUSD  = countUSD > 0 ? sumUSD / countUSD : 0;
+    const rubUSD  = sumUSD * rateUSD;
     const usdUSDT = sumUSDT * rateUSDT;
     const rubUSDT = usdUSDT * rateUSD;
-    
-    // RUB
-    const usdRUB = rateUSD > 0 ? sumRUB / rateUSD : 0;
-    
-    // EUR
-    const usdEUR = rateUSD > 0 ? (sumEUR * rateEUR) / rateUSD : 0;
-    const rubEUR = sumEUR * rateEUR;
-    
-    // Totals
-    const totalCount = parseInt(countUSD||0) + parseInt(countUSDT||0) + parseInt(countRUB||0) + parseInt(countEUR||0);
-    const totalUSD = (parseFloat(sumUSD)||0) + usdUSDT + usdRUB + usdEUR;
-    const totalRUB = rubUSD + rubUSDT + (parseFloat(sumRUB)||0) + rubEUR;
+    const usdRUB  = rateUSD > 0 ? sumRUB / rateUSD : 0;
+    const usdEUR  = rateUSD > 0 ? (sumEUR * rateEUR) / rateUSD : 0;
+    const rubEUR  = sumEUR * rateEUR;
+
+    const totalCount  = countUSD + countUSDT + countRUB + countEUR;
+    const totalUSD    = sumUSD + usdUSDT + usdRUB + usdEUR;
+    const totalRUB    = rubUSD + rubUSDT + sumRUB + rubEUR;
     const avgTotalUSD = totalCount > 0 ? totalUSD / totalCount : 0;
     const avgTotalRUB = totalCount > 0 ? totalRUB / totalCount : 0;
-    
-    return { avgUSD, rubUSD, usdUSDT, rubUSDT, usdRUB, usdEUR, rubEUR, totalCount, totalUSD, totalRUB, avgTotalUSD, avgTotalRUB };
+
+    // Новые и рекуррентные в USD
+    const newTotalUSD   = (r.newSumUSD||0) + (r.newSumUSDT||0)*rateUSDT + (rateUSD>0?(r.newSumRUB||0)/rateUSD:0) + (rateUSD>0?(r.newSumEUR||0)*rateEUR/rateUSD:0);
+    const recurTotalUSD = (r.recurSumUSD||0) + (r.recurSumUSDT||0)*rateUSDT + (rateUSD>0?(r.recurSumRUB||0)/rateUSD:0) + (rateUSD>0?(r.recurSumEUR||0)*rateEUR/rateUSD:0);
+    const newCount   = (r.newCountUSD||0) + (r.newCountUSDT||0) + (r.newCountRUB||0) + (r.newCountEUR||0);
+    const recurCount = (r.recurCountUSD||0) + (r.recurCountUSDT||0) + (r.recurCountRUB||0) + (r.recurCountEUR||0);
+
+    return { avgUSD, rubUSD, usdUSDT, rubUSDT, usdRUB, usdEUR, rubEUR, totalCount, totalUSD, totalRUB, avgTotalUSD, avgTotalRUB, newTotalUSD, recurTotalUSD, newCount, recurCount };
   };
 
-  const { avgUSD, rubUSD, usdUSDT, rubUSDT, usdRUB, usdEUR, rubEUR, totalCount, totalUSD, totalRUB, avgTotalUSD, avgTotalRUB } = calc();
+  const { avgUSD, rubUSD, usdUSDT, rubUSDT, usdRUB, usdEUR, rubEUR, totalCount, totalUSD, totalRUB, avgTotalUSD, avgTotalRUB, newTotalUSD, recurTotalUSD, newCount, recurCount } = calc();
+
+  const handleSend = () => {
+    saveReport();
+    sendToGoogleSheets({ ...formData, section: 'daily', totalUSD, newTotalUSD, recurTotalUSD }, 'daily', onSendSuccess);
+    setSummaryOpen(true);
+  };
   const activityConversion = formData.newLeads > 0 ? (formData.dialogs / formData.newLeads) * 100 : 0;
   const dailyPotentialCount = formData.potentialRows.length;
 
@@ -539,62 +910,111 @@ function DailyReport({ onSendSuccess }) {
       <h2 className="text-3xl font-bold text-slate-800 mb-6 text-center">📅 Ежедневный отчёт</h2>
       <form className="space-y-6">
         
-        <Section title="� Дата отчёта">
-          <div className="grid grid-cols-2 gap-4">
-            <Inp
-              label="Дата"
-              type="date"
-              value={formData.reportDate}
-              onChange={(v) => setFormData({ ...formData, reportDate: v })}
-            />
+        <Section title="📅 Дата отчёта">
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <Inp
+                label="Дата"
+                type="date"
+                value={formData.reportDate}
+                onChange={(v) => setFormData({ ...formData, reportDate: v })}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={loadReportByDate}
+              className="px-5 py-3 bg-slate-700 text-white rounded-xl font-semibold hover:bg-slate-800 transition-all"
+            >
+              Применить
+            </button>
           </div>
         </Section>
 
-        <Section title="�💱 Курсы валют (для конвертации)" bg="bg-yellow-50">
+        <Section title="💱 Курсы валют (для конвертации)" bg="bg-yellow-50">
           <div className="grid grid-cols-3 gap-4">
             <Inp label="USD → RUB" type="number" step="0.01" value={formData.rateUSD} onChange={(v) => setFormData({...formData, rateUSD: parseFloat(v)||0})} />
             <Inp label="EUR → RUB" type="number" step="0.01" value={formData.rateEUR} onChange={(v) => setFormData({...formData, rateEUR: parseFloat(v)||0})} />
             <Inp label="USDT → USD" type="number" step="0.01" value={formData.rateUSDT} onChange={(v) => setFormData({...formData, rateUSDT: parseFloat(v)||0})} />
           </div>
+          <button
+            type="button"
+            onClick={fillRatesFromBybit}
+            disabled={ratesLoading}
+            className="mt-3 px-4 py-2 bg-yellow-500 text-white rounded-lg font-semibold text-sm hover:bg-yellow-600 disabled:opacity-50 transition-all"
+          >
+            {ratesLoading ? 'Загрузка...' : '📈 Получить курс с Bybit P2P'}
+          </button>
+          {ratesSource && <div className="mt-2 text-xs text-slate-500">Источник: {ratesSource}</div>}
         </Section>
 
-        <Section title="💵 Доллары США (USD) - основная валюта" color="border-green-500">
-          <div className="grid grid-cols-4 gap-4">
-            <Inp label="Количество" type="number" value={formData.countUSD} onChange={(v) => setFormData({...formData, countUSD: parseFloat(v)||0})} />
-            <Inp label="Сумма ($)" type="number" step="0.01" value={formData.sumUSD} onChange={(v) => setFormData({...formData, sumUSD: parseFloat(v)||0})} />
-            <Inp label="Средний чек" value={`$${avgUSD.toFixed(2)}`} disabled />
-            <Inp label="В рублях" value={`${rubUSD.toFixed(2)} ₽`} disabled />
+        {/* Вкладки Новый / Рекуррентный платёж */}
+        <div className="bg-white border-2 border-slate-200 rounded-2xl overflow-hidden">
+          <div className="flex border-b border-slate-200">
+            {[{id:'new',label:'🆕 Новый платёж'},{id:'recur',label:'🔄 Рекуррентный'}].map(tab => (
+              <button key={tab.id} type="button"
+                onClick={() => setPaymentTab(tab.id)}
+                className={`flex-1 py-3 font-semibold text-sm transition-all ${paymentTab===tab.id ? 'bg-blue-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
+                {tab.label}
+                {tab.id==='new' && newCount>0 && <span className="ml-2 bg-white/30 text-xs px-1.5 py-0.5 rounded-full">{newCount}</span>}
+                {tab.id==='recur' && recurCount>0 && <span className="ml-2 bg-white/30 text-xs px-1.5 py-0.5 rounded-full">{recurCount}</span>}
+              </button>
+            ))}
           </div>
-        </Section>
-
-        <Section title="💎 Tether (USDT)" color="border-teal-500">
-          <div className="grid grid-cols-4 gap-4">
-            <Inp label="Количество" type="number" value={formData.countUSDT} onChange={(v) => setFormData({...formData, countUSDT: parseFloat(v)||0})} />
-            <Inp label="Сумма (USDT)" type="number" step="0.01" value={formData.sumUSDT} onChange={(v) => setFormData({...formData, sumUSDT: parseFloat(v)||0})} />
-            <Inp label="В долларах" value={`$${usdUSDT.toFixed(2)}`} disabled />
-            <Inp label="В рублях" value={`${rubUSDT.toFixed(2)} ₽`} disabled />
+          <div className="p-4 space-y-4">
+            {(() => {
+              const p = paymentTab === 'new' ? 'new' : 'recur';
+              const f = (field) => `${p}${field}`;
+              return (<>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="border border-green-200 rounded-xl p-3 bg-green-50">
+                    <div className="text-xs font-semibold text-green-700 mb-2">💵 USD</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Inp label="Кол-во" type="number" value={formData[f('CountUSD')]||0} onChange={(v) => setFormData({...formData, [f('CountUSD')]: parseFloat(v)||0})} />
+                      <Inp label="Сумма ($)" type="number" step="0.01" value={formData[f('SumUSD')]||0} onChange={(v) => setFormData({...formData, [f('SumUSD')]: parseFloat(v)||0})} />
+                    </div>
+                  </div>
+                  <div className="border border-teal-200 rounded-xl p-3 bg-teal-50">
+                    <div className="text-xs font-semibold text-teal-700 mb-2">💎 USDT</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Inp label="Кол-во" type="number" value={formData[f('CountUSDT')]||0} onChange={(v) => setFormData({...formData, [f('CountUSDT')]: parseFloat(v)||0})} />
+                      <Inp label="Сумма (USDT)" type="number" step="0.01" value={formData[f('SumUSDT')]||0} onChange={(v) => setFormData({...formData, [f('SumUSDT')]: parseFloat(v)||0})} />
+                    </div>
+                  </div>
+                  <div className="border border-blue-200 rounded-xl p-3 bg-blue-50">
+                    <div className="text-xs font-semibold text-blue-700 mb-2">🇷🇺 RUB</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Inp label="Кол-во" type="number" value={formData[f('CountRUB')]||0} onChange={(v) => setFormData({...formData, [f('CountRUB')]: parseFloat(v)||0})} />
+                      <Inp label="Сумма (₽)" type="number" value={formData[f('SumRUB')]||0} onChange={(v) => setFormData({...formData, [f('SumRUB')]: parseFloat(v)||0})} />
+                    </div>
+                  </div>
+                  <div className="border border-orange-200 rounded-xl p-3 bg-orange-50">
+                    <div className="text-xs font-semibold text-orange-700 mb-2">💶 EUR</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Inp label="Кол-во" type="number" value={formData[f('CountEUR')]||0} onChange={(v) => setFormData({...formData, [f('CountEUR')]: parseFloat(v)||0})} />
+                      <Inp label="Сумма (€)" type="number" step="0.01" value={formData[f('SumEUR')]||0} onChange={(v) => setFormData({...formData, [f('SumEUR')]: parseFloat(v)||0})} />
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right text-sm text-slate-600">
+                  Итого {paymentTab==='new'?'новых':'рекуррентных'}: <span className="font-bold text-slate-800">${(paymentTab==='new'?newTotalUSD:recurTotalUSD).toFixed(2)}</span>
+                </div>
+              </>);
+            })()}
           </div>
-        </Section>
-
-        <Section title="🇷🇺 Рубли (RUB)" color="border-blue-500">
-          <div className="grid grid-cols-3 gap-4">
-            <Inp label="Количество" type="number" value={formData.countRUB} onChange={(v) => setFormData({...formData, countRUB: parseFloat(v)||0})} />
-            <Inp label="Сумма (₽)" type="number" value={formData.sumRUB} onChange={(v) => setFormData({...formData, sumRUB: parseFloat(v)||0})} />
-            <Inp label="В долларах" value={`$${usdRUB.toFixed(2)}`} disabled />
-          </div>
-        </Section>
-
-        <Section title="💶 Евро (EUR)" color="border-orange-500">
-          <div className="grid grid-cols-4 gap-4">
-            <Inp label="Количество" type="number" value={formData.countEUR} onChange={(v) => setFormData({...formData, countEUR: parseFloat(v)||0})} />
-            <Inp label="Сумма (€)" type="number" step="0.01" value={formData.sumEUR} onChange={(v) => setFormData({...formData, sumEUR: parseFloat(v)||0})} />
-            <Inp label="В долларах" value={`$${usdEUR.toFixed(2)}`} disabled />
-            <Inp label="В рублях" value={`${rubEUR.toFixed(2)} ₽`} disabled />
-          </div>
-        </Section>
+        </div>
 
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl p-6 text-white">
-          <div className="grid grid-cols-3 gap-6 mb-4">
+          <div className="grid grid-cols-4 gap-4 mb-4">
+            <div className="text-center">
+              <div className="text-xs opacity-75 mb-1">🆕 Новых</div>
+              <div className="text-2xl font-bold">{newCount}</div>
+              <div className="text-xs opacity-75">${newTotalUSD.toFixed(0)}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs opacity-75 mb-1">🔄 Рекуррент</div>
+              <div className="text-2xl font-bold">{recurCount}</div>
+              <div className="text-xs opacity-75">${recurTotalUSD.toFixed(0)}</div>
+            </div>
             <div className="text-center">
               <div className="text-sm opacity-90 mb-1">Всего оплат</div>
               <div className="text-4xl font-bold">{totalCount}</div>
@@ -603,19 +1023,15 @@ function DailyReport({ onSendSuccess }) {
               <div className="text-sm opacity-90 mb-1">Итого (USD)</div>
               <div className="text-4xl font-bold">${totalUSD.toFixed(2)}</div>
             </div>
-            <div className="text-center">
-              <div className="text-sm opacity-90 mb-1">Итого (RUB)</div>
-              <div className="text-4xl font-bold">{totalRUB.toFixed(0)} ₽</div>
-            </div>
           </div>
           <div className="grid grid-cols-3 gap-6">
             <div className="text-center">
-              <div className="text-sm opacity-90 mb-1">Ср. чек (USD)</div>
-              <div className="text-3xl font-bold">${avgTotalUSD.toFixed(2)}</div>
+              <div className="text-sm opacity-90 mb-1">Итого (RUB)</div>
+              <div className="text-3xl font-bold">{totalRUB.toFixed(0)} ₽</div>
             </div>
             <div className="text-center">
-              <div className="text-sm opacity-90 mb-1">Ср. чек (RUB)</div>
-              <div className="text-3xl font-bold">{avgTotalRUB.toFixed(0)} ₽</div>
+              <div className="text-sm opacity-90 mb-1">Ср. чек</div>
+              <div className="text-3xl font-bold">${avgTotalUSD.toFixed(2)}</div>
             </div>
             <div className="text-center">
               <div className="text-sm opacity-90 mb-1">Курс USD</div>
@@ -625,11 +1041,20 @@ function DailyReport({ onSendSuccess }) {
         </div>
 
         <Section title="📈 Активность">
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <Inp label="Новых лидов *" type="number" value={formData.newLeads} onChange={(v) => setFormData({...formData, newLeads: parseFloat(v)||0})} />
             <Inp label="Открытых диалогов *" type="number" value={formData.dialogs} onChange={(v) => setFormData({...formData, dialogs: parseFloat(v)||0})} />
             <Inp label="Всего в работе *" type="number" value={formData.totalLeads} onChange={(v) => setFormData({...formData, totalLeads: parseFloat(v)||0})} />
-            <Inp label="Конверсия (%)" value={`${activityConversion.toFixed(1)}%`} disabled />
+          </div>
+          <div className="grid grid-cols-3 gap-4 mt-4">
+            <Inp label="⚡ Рег. интенсив" type="number" value={formData.intensive} onChange={(v) => setFormData({...formData, intensive: parseFloat(v)||0})} />
+            <Inp label="🎥 Рег. Zoom" type="number" value={formData.zoom} onChange={(v) => setFormData({...formData, zoom: parseFloat(v)||0})} />
+            <div className="relative group">
+              <Inp label="Конверсия лид→диалог" value={`${activityConversion.toFixed(1)}%`} disabled />
+              <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block z-10 bg-slate-800 text-white text-xs rounded-lg px-3 py-2 whitespace-nowrap shadow-lg">
+                {formData.dialogs} диалогов из {formData.newLeads} лидов = {activityConversion.toFixed(1)}%
+              </div>
+            </div>
           </div>
         </Section>
 
@@ -831,19 +1256,18 @@ function WeeklyReport({ onSendSuccess }) {
   const [viewMode, setViewMode] = useState('edit');
   const [savedData, setSavedData] = useState(null);
   const [summaryRange, setSummaryRange] = useState({ start: '', end: '' });
+  const weeklyDefaults = {
+    paymentsCount: 0, paymentsSum: 0,
+    newPaymentsCount: 0, newPaymentsSum: 0,
+    recurPaymentsCount: 0, recurPaymentsSum: 0,
+    planWeek: 0, factWeek: 0,
+    newLeads: 0, openDialogs: 0, totalInWork: 0, intensive: 0, zoom: 0,
+    whatWorked: '', problems: '', nextWeekPlans: '',
+    weekFocus: '', weekGoalUSD: 0, weekGoalPayments: 0
+  };
   const [formData, setFormData] = useState(() => {
-    const loaded = loadDraft(draftKey, {
-      paymentsCount: 0, paymentsSum: 0, planWeek: 0, factWeek: 0,
-      newLeads: 0, openDialogs: 0, totalInWork: 0, intensive: 0, zoom: 0,
-      whatWorked: '', problems: '', nextWeekPlans: '',
-      weekFocus: '', weekGoalUSD: 0, weekGoalPayments: 0
-    });
-    return typeof loaded === 'object' && loaded !== null ? loaded : {
-      paymentsCount: 0, paymentsSum: 0, planWeek: 0, factWeek: 0,
-      newLeads: 0, openDialogs: 0, totalInWork: 0, intensive: 0, zoom: 0,
-      whatWorked: '', problems: '', nextWeekPlans: '',
-      weekFocus: '', weekGoalUSD: 0, weekGoalPayments: 0
-    };
+    const loaded = loadDraft(draftKey, weeklyDefaults);
+    return typeof loaded === 'object' && loaded !== null ? { ...weeklyDefaults, ...loaded } : weeklyDefaults;
   });
 
   useEffect(() => {
@@ -863,59 +1287,133 @@ function WeeklyReport({ onSendSuccess }) {
       return;
     }
 
-    const rows = await fetchSheetData({
+    const serverRows = await fetchSheetData({
       type: 'daily',
       start: summaryRange.start,
       end: summaryRange.end
     });
 
+    let localRows = [];
+    try {
+      const pending = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+      const allDates = pending.map(r => `${r.type}:${r.reportDate || r.date}`).join(', ');
+      console.log('📦 pendingReports всего:', pending.length, '| Даты:', allDates);
+      localRows = pending.filter(r => {
+        if (r.type !== 'daily') return false;
+        const d = r.reportDate || r.date;
+        return d && d >= summaryRange.start && d <= summaryRange.end;
+      });
+    } catch (e) {
+      console.warn('⚠️ Не удалось загрузить локальные данные:', e.message);
+    }
+
+    const localDates = new Set(localRows.map(r => r.reportDate || r.date).filter(Boolean));
+    const rows = [...localRows, ...serverRows.filter(r => !localDates.has(r.reportDate || r.date))];
+
     if (rows.length === 0) {
-      alert('Нет данных в Google Sheets за выбранный период.');
+      try {
+        const pending = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+        const allDates = pending.filter(r => r.type === 'daily').map(r => r.reportDate || r.date).join(', ');
+        alert(`Нет данных за период ${summaryRange.start} — ${summaryRange.end}.\n\nВ localStorage есть отчёты за: ${allDates || 'нет'}\n\nПроверьте что период совпадает с датами отчётов.`);
+      } catch (_) {
+        alert('Нет данных за выбранный период.');
+      }
       return;
     }
 
     const totals = rows.reduce(
-      (acc, item) => ({
-        revenue: acc.revenue + (Number(item.revenue) || 0),
-        leads: acc.leads + (Number(item.leads) || 0),
-        dialogs: acc.dialogs + (Number(item.dialogs) || 0),
-        intensive: acc.intensive + (Number(item.intensive) || 0),
-        zoom: acc.zoom + (Number(item.zoom) || 0),
-        totalLeads: acc.totalLeads + (Number(item.totalLeads) || 0)
-      }),
-      { revenue: 0, leads: 0, dialogs: 0, intensive: 0, zoom: 0, totalLeads: 0 }
+      (acc, item) => {
+        const itemRevenue = item.totalUSD !== undefined && item.totalUSD !== ''
+          ? Number(item.totalUSD)
+          : (() => {
+              const { rateUSD = 0, rateUSDT = 1, rateEUR = 0, sumUSD = 0, sumUSDT = 0, sumRUB = 0, sumEUR = 0 } = item;
+              return (parseFloat(sumUSD) || 0)
+                + (sumUSDT * rateUSDT)
+                + (rateUSD > 0 ? sumRUB / rateUSD : 0)
+                + (rateUSD > 0 ? (sumEUR * rateEUR) / rateUSD : 0);
+            })();
+        // totalCount пустая строка в Google Sheets — всегда считаем из отдельных полей
+        const itemPayments = (Number(item.countUSD) || 0) + (Number(item.countUSDT) || 0) + (Number(item.countRUB) || 0) + (Number(item.countEUR) || 0)
+          || (Number(item.totalCount) || 0);
+        return {
+          revenue: acc.revenue + itemRevenue,
+          payments: acc.payments + itemPayments,
+          leads: acc.leads + (Number(item.newLeads) || 0),
+          dialogs: acc.dialogs + (Number(item.dialogs) || 0),
+          intensive: acc.intensive + (Number(item.intensive) || 0),
+          zoom: acc.zoom + (Number(item.zoom) || 0),
+          totalLeads: acc.totalLeads + (Number(item.totalLeads) || 0)
+        };
+      },
+      { revenue: 0, payments: 0, leads: 0, dialogs: 0, intensive: 0, zoom: 0, totalLeads: 0 }
     );
 
-    const loadedPotentials = rows.flatMap((item) => {
-      if (item.potentials) {
-        try {
-          return JSON.parse(item.potentials);
-        } catch {
-          return [];
-        }
-      }
-      if (item.potentialRows) {
-        try {
-          return JSON.parse(item.potentialRows);
-        } catch {
-          return [];
+    // Потенциалы берём из localStorage — в Google Sheets они не хранятся
+    const localCacheInRange = (() => {
+      try {
+        const c = JSON.parse(localStorage.getItem('localReportsCache') || '[]');
+        const p = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+        return [...c, ...p].filter(r => {
+          if (r.type !== 'daily') return false;
+          const d = r.reportDate || r.date;
+          return d && d >= summaryRange.start && d <= summaryRange.end;
+        });
+      } catch { return []; }
+    })();
+
+    // Собираем потенциалы из Google Sheets (строка JSON) + localStorage
+    const parsePotentials = (item) => {
+      for (const key of ['potentialRows', 'potentials']) {
+        const val = item[key];
+        if (val) {
+          try {
+            const parsed = typeof val === 'string' ? JSON.parse(val) : val;
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          } catch { }
         }
       }
       return [];
+    };
+
+    const rawPotentials = [
+      ...rows,
+      ...localCacheInRange
+    ].flatMap(parsePotentials);
+
+    // Диагностика
+    console.log('🔍 Потенциалы: серверных строк:', rows.length,
+      '| локальных в диапазоне:', localCacheInRange.length,
+      '| сырых потенциалов:', rawPotentials.length);
+    localCacheInRange.forEach((r, i) => {
+      console.log(`  Локальная запись [${i}] date=${r.reportDate} potentialRows=`, r.potentialRows);
     });
 
-    if (loadedPotentials.length > 0) {
-      setPotentials(loadedPotentials.map((potential) => ({
-        account: potential.account || '',
-        profile: potential.profile || '',
-        plannedPaymentDate: potential.plannedPaymentDate || '',
-        amount: Number(potential.amount) || 0
-      })));
+    const seen = new Set();
+    const uniquePotentials = rawPotentials
+      .filter(p => p.account || p.profile)
+      .filter(p => {
+        const key = (p.account || p.profile || '').trim().toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map(p => ({
+        account: p.account || '',
+        profile: p.profile || '',
+        plannedPaymentDate: p.plannedPaymentDate || '',
+        amount: Number(p.amount) || 0
+      }));
+
+    if (uniquePotentials.length > 0) {
+      // Добавляем пустые строки до 20 чтобы форма была заполнена
+      const padded = [...uniquePotentials];
+      while (padded.length < 20) padded.push({ account: '', profile: '', plannedPaymentDate: '', amount: 0 });
+      setPotentials(padded);
     }
 
     setFormData({
       ...formData,
-      paymentsCount: rows.length,
+      paymentsCount: totals.payments,
       paymentsSum: totals.revenue,
       newLeads: totals.leads,
       openDialogs: totals.dialogs,
@@ -980,9 +1478,25 @@ function WeeklyReport({ onSendSuccess }) {
         </Section>
 
         <Section title="💰 Финансовые результаты">
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <Inp label="Количество оплат" type="number" value={formData.paymentsCount} onChange={(v) => setFormData({...formData, paymentsCount: parseFloat(v)||0})} />
-            <Inp label="Сумма оплат ($)" type="number" step="0.01" value={formData.paymentsSum} onChange={(v) => setFormData({...formData, paymentsSum: parseFloat(v)||0})} />
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="border border-indigo-200 rounded-xl p-4 bg-indigo-50">
+              <div className="text-sm font-semibold text-indigo-700 mb-3">🆕 Новые оплаты</div>
+              <div className="grid grid-cols-2 gap-3">
+                <Inp label="Количество" type="number" value={formData.newPaymentsCount} onChange={(v) => setFormData({...formData, newPaymentsCount: parseFloat(v)||0, paymentsCount: (parseFloat(v)||0)+(formData.recurPaymentsCount||0)})} />
+                <Inp label="Сумма ($)" type="number" step="0.01" value={formData.newPaymentsSum} onChange={(v) => setFormData({...formData, newPaymentsSum: parseFloat(v)||0, paymentsSum: (parseFloat(v)||0)+(formData.recurPaymentsSum||0)})} />
+              </div>
+            </div>
+            <div className="border border-rose-200 rounded-xl p-4 bg-rose-50">
+              <div className="text-sm font-semibold text-rose-700 mb-3">🔄 Рекуррентные</div>
+              <div className="grid grid-cols-2 gap-3">
+                <Inp label="Количество" type="number" value={formData.recurPaymentsCount} onChange={(v) => setFormData({...formData, recurPaymentsCount: parseFloat(v)||0, paymentsCount: (formData.newPaymentsCount||0)+(parseFloat(v)||0)})} />
+                <Inp label="Сумма ($)" type="number" step="0.01" value={formData.recurPaymentsSum} onChange={(v) => setFormData({...formData, recurPaymentsSum: parseFloat(v)||0, paymentsSum: (formData.newPaymentsSum||0)+(parseFloat(v)||0)})} />
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4 mb-4 bg-slate-50 rounded-xl p-3">
+            <Inp label="Итого оплат" value={formData.paymentsCount} disabled />
+            <Inp label="Итого сумма ($)" value={`$${(formData.paymentsSum||0).toFixed(2)}`} disabled />
             <Inp label="Средний чек ($)" value={`$${avgCheck.toFixed(2)}`} disabled />
           </div>
           <h4 className="font-semibold text-slate-700 mb-2">План vs Факт:</h4>
@@ -1124,10 +1638,21 @@ function MonthlyReport({ onSendSuccess }) {
     const loaded = loadDraft(draftKey, [{ name: '', count: 0, sum: 0 }]);
     return Array.isArray(loaded) ? loaded : [{ name: '', count: 0, sum: 0 }];
   });
-  const [viewMode, setViewMode] = useState('edit'); // 'edit' or 'present'
+  const [viewMode, setViewMode] = useState('edit');
   const [savedData, setSavedData] = useState(null);
   const [monthlyMessage, setMonthlyMessage] = useState('');
   const [loadedRange, setLoadedRange] = useState('');
+  const [reconciliation, setReconciliation] = useState(null);
+  const [reconcLoading, setReconcLoading] = useState(false);
+
+  const loadReconciliation = async () => {
+    if (!formData.reportMonth) { alert('Сначала выберите месяц.'); return; }
+    setReconcLoading(true);
+    setReconciliation(null);
+    const result = await fetchReconciliation(formData.reportMonth);
+    setReconciliation(result);
+    setReconcLoading(false);
+  };
   const [formData, setFormData] = useState(() => {
     const loaded = loadDraft(draftKey, {
       reportMonth: '', planUSD: 0, factUSD: 0, totalPayments: 0,
@@ -1161,26 +1686,82 @@ function MonthlyReport({ onSendSuccess }) {
     const start = `${year}-${month}-01`;
     const end = formatDateString(new Date(Number(year), Number(month), 0));
 
-    let rows = await fetchSheetData({ type: 'weekly', start, end });
-    if (rows.length === 0) {
-      rows = await fetchSheetData({ type: 'daily', start, end });
+    // Загружаем из localStorage и с сервера, локальные имеют приоритет
+    let localRows = [], dataType = 'daily';
+    try {
+      const pending = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+      const localWeekly = pending.filter(r => {
+        if (r.type !== 'weekly') return false;
+        const d = r.reportDate || r.date;
+        return d && d >= start && d <= end;
+      });
+      const localDaily = pending.filter(r => {
+        if (r.type !== 'daily') return false;
+        const d = r.reportDate || r.date;
+        return d && d >= start && d <= end;
+      });
+      if (localWeekly.length > 0) { localRows = localWeekly; dataType = 'weekly'; }
+      else if (localDaily.length > 0) { localRows = localDaily; dataType = 'daily'; }
+    } catch (e) { console.warn('⚠️ Локальные данные:', e.message); }
+
+    let serverRows = await fetchSheetData({ type: dataType === 'weekly' ? 'weekly' : 'daily', start, end });
+    if (serverRows.length === 0 && dataType !== 'weekly') {
+      serverRows = await fetchSheetData({ type: 'weekly', start, end });
+      if (serverRows.length > 0) dataType = 'weekly';
     }
 
+    const localDates = new Set(localRows.map(r => r.reportDate || r.date).filter(Boolean));
+    const rows = [...localRows, ...serverRows.filter(r => !localDates.has(r.reportDate || r.date))];
+
     if (rows.length === 0) {
-      alert('Нет данных за выбранный месяц.');
+      const dateLabel = new Date(Number(year), Number(month) - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+      setFormData({
+        ...formData,
+        planUSD: 0, factUSD: 0, totalPayments: 0, totalLeads: 0,
+        intensive: 0, zoom: 0, payments: 0, newClients: 0
+      });
+      setLoadedRange(`Выбранный период: ${dateLabel}`);
+      setMonthlyMessage('Нет данных в CRM за этот период. Показатели обнулены — можно ввести вручную или сверить с таблицей.');
       return;
     }
 
-    const totals = rows.reduce((acc, item) => ({
-      planUSD: acc.planUSD + (Number(item.planWeek) || 0),
-      factUSD: acc.factUSD + (Number(item.factWeek) || 0),
-      totalPayments: acc.totalPayments + (Number(item.paymentsCount) || 0),
-      totalLeads: acc.totalLeads + (Number(item.totalLeads) || 0),
-      intensive: acc.intensive + (Number(item.intensive) || 0),
-      zoom: acc.zoom + (Number(item.zoom) || 0),
-      payments: acc.payments + (Number(item.payments) || 0),
-      newClients: acc.newClients + (Number(item.newLeads) || 0)
-    }), {
+    const totals = rows.reduce((acc, item) => {
+      if (dataType === 'weekly') {
+        return {
+          planUSD:       acc.planUSD       + (Number(item.planWeek)     || 0),
+          factUSD:       acc.factUSD       + (Number(item.factWeek)     || 0),
+          totalPayments: acc.totalPayments + (Number(item.paymentsCount)|| 0),
+          totalLeads:    acc.totalLeads    + (Number(item.totalLeads)   || 0),
+          intensive:     acc.intensive     + (Number(item.intensive)    || 0),
+          zoom:          acc.zoom          + (Number(item.zoom)         || 0),
+          payments:      acc.payments      + (Number(item.payments)     || 0),
+          newClients:    acc.newClients    + (Number(item.newLeads)     || 0)
+        };
+      } else {
+        const rev = item.totalUSD !== undefined
+          ? Number(item.totalUSD)
+          : (() => {
+              const { rateUSD = 0, rateUSDT = 1, rateEUR = 0, sumUSD = 0, sumUSDT = 0, sumRUB = 0, sumEUR = 0 } = item;
+              return (parseFloat(sumUSD) || 0)
+                + (sumUSDT * rateUSDT)
+                + (rateUSD > 0 ? sumRUB / rateUSD : 0)
+                + (rateUSD > 0 ? (sumEUR * rateEUR) / rateUSD : 0);
+            })();
+        const pmts = item.totalCount !== undefined
+          ? Number(item.totalCount)
+          : (Number(item.countUSD)||0)+(Number(item.countUSDT)||0)+(Number(item.countRUB)||0)+(Number(item.countEUR)||0);
+        return {
+          planUSD:       acc.planUSD,
+          factUSD:       acc.factUSD       + rev,
+          totalPayments: acc.totalPayments + pmts,
+          totalLeads:    acc.totalLeads    + (Number(item.totalLeads) || 0),
+          intensive:     acc.intensive     + (Number(item.intensive)  || 0),
+          zoom:          acc.zoom          + (Number(item.zoom)       || 0),
+          payments:      acc.payments      + pmts,
+          newClients:    acc.newClients    + (Number(item.newLeads)   || 0)
+        };
+      }
+    }, {
       planUSD: 0, factUSD: 0, totalPayments: 0, totalLeads: 0, intensive: 0, zoom: 0, payments: 0, newClients: 0
     });
 
@@ -1195,10 +1776,59 @@ function MonthlyReport({ onSendSuccess }) {
       payments: totals.payments,
       newClients: totals.newClients
     });
-    const dateLabel = new Date(`${year}-${month}-01`).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+    const dateLabel = new Date(Number(year), Number(month) - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
     const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
     setLoadedRange(`Выбранный период: ${dateLabel} (${start} — ${end}), ${daysInMonth} дн.`);
     setMonthlyMessage('Данные загружены из еженедельных отчётов. Проверьте и скорректируйте при необходимости.');
+  };
+
+  const [activityLoading, setActivityLoading] = useState(false);
+
+  const loadActivityFromDaily = async () => {
+    if (!formData.reportMonth) { alert('Сначала выберите месяц.'); return; }
+    setActivityLoading(true);
+    const [year, month] = formData.reportMonth.split('-');
+    const start = `${year}-${month}-01`;
+    const end = formatDateString(new Date(Number(year), Number(month), 0));
+
+    const serverRows = await fetchSheetData({ type: 'daily', start, end });
+    let localRows = [];
+    try {
+      const pending = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+      localRows = pending.filter(r => {
+        if (r.type !== 'daily') return false;
+        const d = r.reportDate || r.date;
+        return d && d >= start && d <= end;
+      });
+    } catch (_) {}
+
+    const localDates = new Set(localRows.map(r => r.reportDate || r.date).filter(Boolean));
+    const rows = [...localRows, ...serverRows.filter(r => !localDates.has(r.reportDate || r.date))];
+
+    if (rows.length === 0) {
+      alert('Нет ежедневных данных за выбранный месяц.');
+      setActivityLoading(false);
+      return;
+    }
+
+    const totals = rows.reduce((acc, item) => {
+      const pmts = item.totalCount !== undefined
+        ? Number(item.totalCount)
+        : (Number(item.countUSD)||0)+(Number(item.countUSDT)||0)+(Number(item.countRUB)||0)+(Number(item.countEUR)||0);
+      return {
+        totalLeads: acc.totalLeads + (Number(item.totalLeads) || 0),
+        newClients: acc.newClients + (Number(item.newLeads)   || 0),
+        payments:   acc.payments   + pmts,
+      };
+    }, { totalLeads: 0, newClients: 0, payments: 0 });
+
+    setFormData(prev => ({
+      ...prev,
+      totalLeads: totals.totalLeads,
+      newClients: totals.newClients,
+      payments:   totals.payments,
+    }));
+    setActivityLoading(false);
   };
 
   const planPercent = formData.planUSD > 0 ? (formData.factUSD / formData.planUSD) * 100 : 0;
@@ -1246,8 +1876,19 @@ function MonthlyReport({ onSendSuccess }) {
   return (
     <div className="bg-white rounded-2xl shadow-xl p-8 max-w-5xl mx-auto">
       <h2 className="text-3xl font-bold text-slate-800 mb-6 text-center">📈 Месячный отчёт</h2>
+
+      <a
+        href={PAYMENTS_SHEET_LINK}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center justify-between mb-6 px-4 py-3 bg-green-50 border border-green-200 rounded-xl hover:bg-green-100 transition-colors"
+      >
+        <span className="text-sm font-semibold text-green-800">📊 Таблица оплат клиентов (Google Sheets)</span>
+        <span className="text-xs text-green-600 font-medium">Открыть →</span>
+      </a>
+
       <form className="space-y-6">
-        
+
         <Section title="💰 Финансовые результаты">
           <Inp label="Месяц и год *" type="month" value={formData.reportMonth} onChange={(v) => setFormData({...formData, reportMonth: v})} />
           <button
@@ -1328,6 +1969,17 @@ function MonthlyReport({ onSendSuccess }) {
 
         <Section title="📊 Активность за месяц">
           <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={loadActivityFromDaily}
+                disabled={activityLoading}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold text-sm hover:bg-blue-700 disabled:opacity-50 transition-all"
+              >
+                {activityLoading ? 'Загрузка...' : '📥 Загрузить из ежедневных отчётов'}
+              </button>
+              <span className="text-xs text-slate-400">Суммирует лиды и оплаты по дням месяца</span>
+            </div>
             <Inp label="Всего лидов" type="number" value={formData.totalLeads} onChange={(v) => setFormData({...formData, totalLeads: parseFloat(v)||0})} />
             
             <div className="grid grid-cols-2 gap-4">
@@ -1434,7 +2086,76 @@ function MonthlyReport({ onSendSuccess }) {
         </div>
 
         <Btn onClick={handleSend}>Сохранить и отправить отчёт</Btn>
-        
+
+        <Section title="🔍 Сверка с таблицей оплат">
+          <p className="text-sm text-slate-500 mb-3">Загружает фактические оплаты за выбранный месяц прямо из Google Sheets и сравнивает с данными CRM.</p>
+          <button
+            type="button"
+            onClick={loadReconciliation}
+            disabled={reconcLoading}
+            className="px-5 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-all"
+          >
+            {reconcLoading ? 'Загрузка...' : '🔄 Сверить с таблицей'}
+          </button>
+
+          {reconciliation && !reconciliation.error && (
+            <div className="mt-4 space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-slate-50 p-4 rounded-xl">
+                  <div className="text-xs text-slate-500 mb-1">Таблица — RUB</div>
+                  <div className="text-xl font-bold text-slate-800">{reconciliation.totalRUB.toLocaleString('ru-RU')} ₽</div>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-xl">
+                  <div className="text-xs text-slate-500 mb-1">Таблица — USDT</div>
+                  <div className="text-xl font-bold text-slate-800">{reconciliation.totalUSDt.toFixed(2)} USDT</div>
+                </div>
+                <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
+                  <div className="text-xs text-blue-600 mb-1">CRM — выручка $</div>
+                  <div className="text-xl font-bold text-blue-700">${formData.factUSD.toFixed(2)}</div>
+                </div>
+              </div>
+
+              {reconciliation.clients.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="text-left px-4 py-3 font-semibold text-slate-700">Клиент</th>
+                        <th className="text-right px-4 py-3 font-semibold text-slate-700">RUB</th>
+                        <th className="text-right px-4 py-3 font-semibold text-slate-700">USDT</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reconciliation.clients.map((c, i) => (
+                        <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
+                          <td className="px-4 py-2 text-slate-700">{c.name}</td>
+                          <td className="px-4 py-2 text-right text-slate-700">{c.rub > 0 ? `${c.rub.toLocaleString('ru-RU')} ₽` : '—'}</td>
+                          <td className="px-4 py-2 text-right text-slate-700">{c.usdt > 0 ? `${c.usdt} USDT` : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-slate-50 font-semibold">
+                      <tr className="border-t-2 border-slate-200">
+                        <td className="px-4 py-3 text-slate-800">Итого ({reconciliation.clients.length} кл.)</td>
+                        <td className="px-4 py-3 text-right text-slate-800">{reconciliation.totalRUB.toLocaleString('ru-RU')} ₽</td>
+                        <td className="px-4 py-3 text-right text-slate-800">{reconciliation.totalUSDt.toFixed(2)} USDT</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500 mt-2">Оплат за {reconciliation.monthName} в таблице не найдено.</div>
+              )}
+            </div>
+          )}
+
+          {reconciliation?.error && (
+            <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              {reconciliation.error}
+            </div>
+          )}
+        </Section>
+
         {savedData && (
           <button
             type="button"
@@ -1454,24 +2175,57 @@ function MonthlyReport({ onSendSuccess }) {
 function Analytics({ data, period, setPeriod, customDates, setCustomDates, applyAnalytics }) {
   if (!data) return <div className="text-center py-20 text-slate-600">Загрузка...</div>;
 
+  // Для периодов >= 90 дней группируем по месяцам, заполняя пустые месяцы нулями
+  const useMonthly = period >= 90;
+  const chartData = useMonthly ? (() => {
+    // Агрегируем данные по месяцам
+    const months = {};
+    data.forEach(d => {
+      const key = (d.date || d.reportDate || '').substring(0, 7);
+      if (!key) return;
+      if (!months[key]) months[key] = { date: key, revenue: 0, leads: 0, dialogs: 0, intensive: 0, zoom: 0, payments: 0, newPayments: 0, recurPayments: 0, newRevenue: 0, recurRevenue: 0 };
+      months[key].revenue       += d.revenue || 0;
+      months[key].leads         += d.leads || 0;
+      months[key].dialogs       += d.dialogs || 0;
+      months[key].intensive     += d.intensive || 0;
+      months[key].zoom          += d.zoom || 0;
+      months[key].payments      += d.payments || 0;
+      months[key].newPayments   += d.newPayments   || 0;
+      months[key].recurPayments += d.recurPayments || 0;
+      months[key].newRevenue    += d.newRevenue    || 0;
+      months[key].recurRevenue  += d.recurRevenue  || 0;
+    });
+
+    const today = new Date();
+    const result = [];
+    for (let i = period / 30; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      result.push(months[key] || { date: key, revenue: 0, leads: 0, dialogs: 0, intensive: 0, zoom: 0, payments: 0, newPayments: 0, recurPayments: 0, newRevenue: 0, recurRevenue: 0 });
+    }
+    return result;
+  })() : data;
+
   const totalRevenue = data.reduce((sum, d) => sum + d.revenue, 0);
   const totalLeads = data.reduce((sum, d) => sum + d.leads, 0);
+  const totalPayments = data.reduce((sum, d) => sum + d.payments, 0);
+  const totalNewPayments   = data.reduce((sum, d) => sum + (d.newPayments   || 0), 0);
+  const totalRecurPayments = data.reduce((sum, d) => sum + (d.recurPayments || 0), 0);
   const totalDialogs = data.reduce((sum, d) => sum + d.dialogs, 0);
   const totalIntensive = data.reduce((sum, d) => sum + d.intensive, 0);
   const totalZoom = data.reduce((sum, d) => sum + d.zoom, 0);
-  const avgConversion = data.reduce((sum, d) => sum + d.conversion, 0) / data.length;
+  const overallConversion = totalLeads > 0 ? (totalPayments / totalLeads) * 100 : 0;
 
   const isEmptyData = data.every(d =>
-    d.revenue === 0 && d.leads === 0 && d.dialogs === 0 && d.intensive === 0 && d.zoom === 0 && d.conversion === 0
+    d.revenue === 0 && d.leads === 0 && d.dialogs === 0 && d.intensive === 0 && d.zoom === 0 && d.payments === 0
   );
 
-  const stats = [
-    { label: 'Общая выручка', value: `$${totalRevenue.toFixed(0)}`, change: isEmptyData ? '—' : '', icon: DollarSign, color: '#3b82f6' },
-    { label: 'Всего лидов', value: totalLeads, change: isEmptyData ? '—' : '', icon: Users, color: '#10b981' },
-    { label: 'Диалоги', value: totalDialogs, change: isEmptyData ? '—' : '', icon: MessageSquare, color: '#a855f7' },
-    { label: 'Рег. интенсив', value: totalIntensive, change: isEmptyData ? '—' : '', icon: Zap, color: '#f59e0b' },
-    { label: 'Рег. Zoom', value: totalZoom, change: isEmptyData ? '—' : '', icon: Video, color: '#ec4899' },
-    { label: 'Конверсия', value: `${avgConversion.toFixed(1)}%`, change: isEmptyData ? '—' : '', icon: Target, color: '#6366f1' }
+  const funnelSteps = [
+    { label: 'Всего лидов',      value: totalLeads,     icon: '👥', color: '#10b981' },
+    { label: 'Диалоги',          value: totalDialogs,   icon: '💬', color: '#3b82f6' },
+    { label: 'Рег. на интенсив', value: totalIntensive, icon: '⚡', color: '#f59e0b' },
+    { label: 'Рег. на Zoom',     value: totalZoom,      icon: '🎥', color: '#ec4899' },
+    { label: 'Оплаты',           value: totalPayments,  icon: '💳', color: '#14b8a6' },
   ];
 
   const periods = [
@@ -1534,25 +2288,71 @@ function Analytics({ data, period, setPeriod, customDates, setCustomDates, apply
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
-        {stats.map((stat, i) => {
-          const Icon = stat.icon;
-          return (
-            <div key={i} className="bg-white rounded-2xl shadow-xl p-6">
-              <div style={{ backgroundColor: stat.color }} className="w-12 h-12 rounded-xl flex items-center justify-center mb-4">
-                <Icon className="w-6 h-6 text-white" />
+      <div className="bg-white rounded-2xl shadow-xl p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold text-slate-800">Воронка продаж</h3>
+          <div className="text-sm text-slate-500">
+            Сквозная конверсия:&nbsp;
+            <span className="font-bold text-indigo-600">{overallConversion.toFixed(1)}%</span>
+          </div>
+        </div>
+        <div className="space-y-1">
+          {funnelSteps.map((step, i) => {
+            const maxVal = totalLeads || 1;
+            const pct = maxVal > 0 ? (step.value / maxVal) * 100 : 0;
+            const prevVal = i > 0 ? funnelSteps[i - 1].value : null;
+            const dropPct = prevVal > 0 ? ((step.value / prevVal) * 100).toFixed(0) : null;
+            return (
+              <div key={i}>
+                {i > 0 && (
+                  <div className="flex items-center justify-center py-1 text-slate-400 text-xs gap-1">
+                    <span>↓</span>
+                    <span>{dropPct !== null ? `${dropPct}% от предыдущего` : '—'}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-3">
+                  <div className="w-40 text-sm font-medium text-slate-600 flex items-center gap-2 shrink-0">
+                    <span className="text-lg">{step.icon}</span>
+                    <span>{step.label}</span>
+                  </div>
+                  <div className="flex-1 h-10 bg-slate-100 rounded-lg overflow-hidden">
+                    <div
+                      className="h-full rounded-lg flex items-center justify-end pr-3 transition-all duration-500"
+                      style={{ width: `${Math.max(pct, 2)}%`, backgroundColor: step.color }}
+                    />
+                  </div>
+                  <div className="w-14 text-right font-bold text-slate-800 shrink-0">{step.value}</div>
+                  <div className="w-12 text-right text-sm text-slate-400 shrink-0">{pct.toFixed(0)}%</div>
+                </div>
               </div>
-              <div className="text-slate-600 text-sm mb-1">{stat.label}</div>
-              <div className="text-3xl font-bold text-slate-800 mb-2">{stat.value}</div>
-              <div className="text-slate-500 text-sm font-medium">{stat.change}</div>
+            );
+          })}
+        </div>
+        <div className="mt-6 pt-4 border-t border-slate-100">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-slate-600 font-medium">Общая выручка за период</span>
+            <span className="text-2xl font-bold text-blue-600">${totalRevenue.toFixed(0)}</span>
+          </div>
+          {(totalNewPayments > 0 || totalRecurPayments > 0) && (
+            <div className="grid grid-cols-2 gap-3 mt-2">
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-center">
+                <div className="text-xs text-indigo-500 mb-1">🆕 Новые оплаты</div>
+                <div className="text-xl font-bold text-indigo-700">{totalNewPayments}</div>
+                <div className="text-xs text-indigo-400">{totalLeads > 0 ? ((totalNewPayments/totalLeads)*100).toFixed(1) : 0}% от лидов</div>
+              </div>
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-center">
+                <div className="text-xs text-rose-500 mb-1">🔄 Рекуррентные</div>
+                <div className="text-xl font-bold text-rose-700">{totalRecurPayments}</div>
+                <div className="text-xs text-rose-400">{totalPayments > 0 ? ((totalRecurPayments/totalPayments)*100).toFixed(1) : 0}% от всех</div>
+              </div>
             </div>
-          );
-        })}
+          )}
+        </div>
       </div>
 
-      <ChartCard title="💰 Выручка по дням">
+      <ChartCard title={useMonthly ? "💰 Выручка по месяцам" : "💰 Выручка по дням"}>
         <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={data}>
+          <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="date" stroke="#64748b" />
             <YAxis stroke="#64748b" />
@@ -1562,9 +2362,9 @@ function Analytics({ data, period, setPeriod, customDates, setCustomDates, apply
         </ResponsiveContainer>
       </ChartCard>
 
-      <ChartCard title="👥 Новые лиды">
+      <ChartCard title={useMonthly ? "👥 Лиды по месяцам" : "👥 Новые лиды"}>
         <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={data}>
+          <BarChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="date" stroke="#64748b" />
             <YAxis stroke="#64748b" />
@@ -1574,9 +2374,9 @@ function Analytics({ data, period, setPeriod, customDates, setCustomDates, apply
         </ResponsiveContainer>
       </ChartCard>
 
-      <ChartCard title="💬 Количество диалогов">
+      <ChartCard title={useMonthly ? "💬 Диалоги по месяцам" : "💬 Количество диалогов"}>
         <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={data}>
+          <BarChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="date" stroke="#64748b" />
             <YAxis stroke="#64748b" />
@@ -1588,7 +2388,7 @@ function Analytics({ data, period, setPeriod, customDates, setCustomDates, apply
 
       <ChartCard title="⚡ Регистрации на интенсив">
         <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={data}>
+          <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="date" stroke="#64748b" />
             <YAxis stroke="#64748b" />
@@ -1600,7 +2400,7 @@ function Analytics({ data, period, setPeriod, customDates, setCustomDates, apply
 
       <ChartCard title="📹 Регистрации на Zoom">
         <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={data}>
+          <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="date" stroke="#64748b" />
             <YAxis stroke="#64748b" />
@@ -1610,9 +2410,22 @@ function Analytics({ data, period, setPeriod, customDates, setCustomDates, apply
         </ResponsiveContainer>
       </ChartCard>
 
+      <ChartCard title={useMonthly ? "💳 Оплаты: новые vs рекуррентные (по месяцам)" : "💳 Оплаты: новые vs рекуррентные"}>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <XAxis dataKey="date" stroke="#64748b" />
+            <YAxis stroke="#64748b" />
+            <Tooltip />
+            <Bar dataKey="newPayments"   name="🆕 Новые"        fill="#6366f1" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="recurPayments" name="🔄 Рекуррентные" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
       <ChartCard title="📊 Конверсия в оплату из лида">
         <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={data}>
+          <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="date" stroke="#64748b" />
             <YAxis stroke="#64748b" />

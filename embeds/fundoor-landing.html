@@ -1,7 +1,7 @@
 <!--
   Fundoor × APCrypto Club — встраиваемый лендинг (HTML-блок конструктора).
   Всё изолировано внутри .fdr-root: стили не трогают страницу-хост,
-  скрипт не создаёт глобальных переменных и не меняет title/lang/cookie хоста.
+  скриптов нет, title/lang/cookie хоста не трогаются.
 -->
 <style>
 /* ===== full-bleed контейнер ===== */
@@ -45,37 +45,27 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
 .fdr-root .btn-primary { background: var(--accent) !important; color: #fff !important; border-color: transparent !important; }
 .fdr-root .btn-primary:hover { background: var(--accent-hover) !important; color: #fff !important; }
 .fdr-root .btn-secondary { background: var(--panel) !important; color: var(--text) !important; border-color: var(--border) !important; }
-.fdr-root .val-pos { color: var(--green) !important; }
-.fdr-root .val-neg { color: var(--red) !important; }
-.fdr-root .locked-cell, .fdr-root .cell-sub, .fdr-root .widget-table th, .fdr-root .widget-foot { color: var(--muted-2) !important; }
-.fdr-root .widget-table th.sorted { color: var(--accent) !important; }
-.fdr-root .widget-table td, .fdr-root .coin-cell, .fdr-root .widget-title { color: var(--text) !important; }
-.fdr-root .widget-tab { color: var(--muted) !important; }
-.fdr-root .widget-tab.active { color: #fff !important; }
-.fdr-root .widget-foot a { color: var(--accent) !important; }
-.fdr-root .pair-cell, .fdr-root .hero-sub, .fdr-root .section-sub { color: var(--muted) !important; }
+.fdr-root .hero-sub, .fdr-root .section-sub { color: var(--muted) !important; }
 .fdr-root .hero-trust, .fdr-root .stage-label { color: var(--muted-2) !important; }
-.fdr-root .demo-badge { color: #fbbf24 !important; }
 
 /* ===== hero ===== */
 .fdr-root .hero {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 56px 20px 40px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-  gap: 40px;
-  align-items: center;
+  padding: 72px 20px 40px;
+  text-align: center;
 }
 .fdr-root .hero-copy h1 {
-  margin: 0;
+  margin: 0 auto;
+  max-width: 820px;
   font-size: clamp(30px, 4.2vw, 46px);
   line-height: 1.12;
   font-weight: 800;
   letter-spacing: -0.5px;
 }
-.fdr-root .hero-sub { margin: 18px 0 0; font-size: 16px; line-height: 1.6; max-width: 560px; }
-.fdr-root .hero-actions { margin-top: 26px; display: flex; gap: 12px; flex-wrap: wrap; }
+.fdr-root .hero-copy h1 .accent { white-space: nowrap; }
+.fdr-root .hero-sub { margin: 18px auto 0; font-size: 16px; line-height: 1.6; max-width: 640px; }
+.fdr-root .hero-actions { margin-top: 26px; display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
 .fdr-root .btn {
   padding: 12px 22px;
   border-radius: 10px;
@@ -91,110 +81,9 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
 }
 .fdr-root .btn:hover { transform: translateY(-1px); }
 .fdr-root .btn-lg { font-size: 18px; padding: 16px 40px; }
-.fdr-root .hero-trust { margin-top: 22px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 13.5px; }
+.fdr-root .hero-trust { margin-top: 22px; display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; font-size: 13.5px; }
 .fdr-root .hero-trust > span { display: inline-flex; align-items: center; gap: 7px; }
 .fdr-root .trust-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex: none; }
-
-/* ===== live widget ===== */
-.fdr-root .widget {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
-}
-.fdr-root .widget-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border-soft);
-  flex-wrap: wrap;
-}
-.fdr-root .widget-title { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 14.5px; }
-.fdr-root .live-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--green);
-  animation: fdr-livepulse 2s infinite;
-  flex: none;
-}
-.fdr-root .live-dot.offline { background: var(--muted-2); animation: none; }
-@keyframes fdr-livepulse {
-  0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.45); }
-  70% { box-shadow: 0 0 0 7px rgba(52, 211, 153, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
-}
-.fdr-root .demo-badge {
-  font-size: 10.5px;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 20px;
-  background: rgba(251, 191, 36, 0.12);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-.fdr-root .demo-badge[hidden] { display: none; }
-.fdr-root .widget-tabs { display: flex; gap: 4px; background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 3px; }
-.fdr-root .widget-tab {
-  padding: 6px 12px;
-  font-size: 12.5px;
-  font-weight: 600;
-  font-family: inherit;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.fdr-root .widget-tab.active { background: var(--accent); }
-.fdr-root .widget-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.fdr-root .widget-table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 0; }
-.fdr-root .widget-table th {
-  text-align: right;
-  font-weight: 600;
-  font-size: 11.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  padding: 9px 12px 7px;
-  border: none;
-  border-bottom: 1px solid var(--border-soft);
-  background: none;
-  white-space: nowrap;
-}
-.fdr-root .widget-table th:first-child, .fdr-root .widget-table th:nth-child(2) { text-align: left; }
-.fdr-root .widget-table td {
-  padding: 8px 12px;
-  border: none;
-  border-bottom: 1px solid var(--border-soft);
-  background: none;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.fdr-root .widget-table td:first-child, .fdr-root .widget-table td:nth-child(2) { text-align: left; }
-.fdr-root .widget-table tbody tr:last-child td { border-bottom: none; }
-.fdr-root .widget-table tbody tr:hover { background: var(--panel-2); }
-.fdr-root .coin-cell { font-weight: 700; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
-.fdr-root .pair-cell { display: flex; align-items: center; gap: 5px; font-size: 12.5px; }
-.fdr-root .ex-ico { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; background: #0a0d13; flex: none; }
-.fdr-root .pair-arrow { color: var(--muted-2); font-size: 11px; }
-.fdr-root .val-pos, .fdr-root .val-neg { font-weight: 600; }
-.fdr-root .cell-sub { display: block; font-size: 10px; font-weight: 500; line-height: 1.2; margin-top: 1px; }
-.fdr-root .locked-cell { cursor: default; }
-.fdr-root .lock-ico { width: 12px; height: 12px; object-fit: contain; vertical-align: -1px; opacity: 0.8; }
-.fdr-root .widget-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 11px 16px;
-  font-size: 12.5px;
-  border-top: 1px solid var(--border-soft);
-  flex-wrap: wrap;
-}
-.fdr-root .widget-foot a { font-weight: 600; }
-.fdr-root .widget-foot a:hover { text-decoration: underline; }
 
 /* ===== sections ===== */
 .fdr-root .section { max-width: 1200px; margin: 0 auto; padding: 56px 20px; }
@@ -286,15 +175,10 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
 .fdr-root .final-cta p { margin: 0 auto 24px; max-width: 520px; font-size: 15px; line-height: 1.6; }
 
 @media (max-width: 1024px) {
-  .fdr-root .hero { grid-template-columns: 1fr; padding-top: 36px; gap: 30px; }
+  .fdr-root .hero { padding-top: 44px; }
   .fdr-root .feature, .fdr-root .feature.reverse { grid-template-columns: 1fr; gap: 20px; padding: 26px 0; }
   .fdr-root .feature.reverse .feature-copy { order: 1; }
   .fdr-root .feature.reverse .feature-shot { order: 2; }
-}
-@media (min-width: 1025px) and (max-width: 1150px) {
-  .fdr-root .widget-table th:nth-child(6), .fdr-root .widget-table td:nth-child(6) { display: none; }
-  .fdr-root .widget-table th, .fdr-root .widget-table td { padding-left: 8px; padding-right: 8px; }
-  .fdr-root .coin-cell { max-width: 76px; }
 }
 @media (max-width: 560px) {
   .fdr-root .hero { padding: 28px 16px 24px; }
@@ -302,26 +186,15 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
   .fdr-root .hero-actions .btn, .fdr-root .final-cta .btn { width: 100%; }
   .fdr-root .hero-trust { gap: 8px 16px; }
   .fdr-root .btn-lg { font-size: 16px; padding: 14px 20px; }
-  .fdr-root .widget-table th:nth-child(6), .fdr-root .widget-table td:nth-child(6) { display: none; }
-  .fdr-root .widget-table:not([data-sort="a3"]) th:nth-child(5),
-  .fdr-root .widget-table:not([data-sort="a3"]) td:nth-child(5) { display: none; }
-  .fdr-root .widget-table[data-sort="a3"] th:nth-child(4),
-  .fdr-root .widget-table[data-sort="a3"] td:nth-child(4) { display: none; }
-  .fdr-root .widget-table th, .fdr-root .widget-table td { padding-left: 6px; padding-right: 6px; }
-  .fdr-root .coin-cell { max-width: 66px; }
-  .fdr-root .ex-ico { width: 16px; height: 16px; }
-  .fdr-root .pair-cell { gap: 4px; }
-  .fdr-root .cell-sub { font-size: 9px; }
   .fdr-root .cards { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .fdr-root .live-dot { animation: none; }
   .fdr-root .btn:hover { transform: none; }
 }
 </style>
 
 <div class="fdr-root" id="fdrRoot">
-  <!-- ===== HERO + LIVE WIDGET ===== -->
+  <!-- ===== HERO ===== -->
   <header class="hero">
     <div class="hero-copy">
       <h1>Полный цикл арбитража — <span class="accent">в одном сервисе</span></h1>
@@ -337,39 +210,6 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
       </div>
     </div>
 
-    <div class="widget">
-      <div class="widget-head">
-        <div class="widget-title">
-          <span class="live-dot offline" data-w="dot"></span>
-          <span>Живые фандинг-связки</span>
-          <span class="demo-badge" data-w="demo" hidden title="Нет связи с Fundoor — показан пример">пример</span>
-        </div>
-        <div class="widget-tabs" data-w="tabs" role="tablist">
-          <button type="button" class="widget-tab active" data-sort="apr" role="tab" aria-selected="true">APR сейчас</button>
-          <button type="button" class="widget-tab" data-sort="a1" role="tab" aria-selected="false">За 1 день</button>
-          <button type="button" class="widget-tab" data-sort="a3" role="tab" aria-selected="false">За 3 дня</button>
-        </div>
-      </div>
-      <div class="widget-scroll">
-        <table class="widget-table" data-w="table" data-sort="apr">
-          <thead>
-            <tr>
-              <th>Монета</th>
-              <th>Связка</th>
-              <th data-th="apr" class="sorted">APR</th>
-              <th data-th="a1">1д</th>
-              <th data-th="a3">3д</th>
-              <th class="locked-cell" title="Спреды, другие периоды и настройки — по подписке">Спред</th>
-            </tr>
-          </thead>
-          <tbody data-w="body"></tbody>
-        </table>
-      </div>
-      <div class="widget-foot">
-        <span>Одна связка на монету · только фьючерсы</span>
-        <a href="https://fundoor.pro/register?invite=apclub" data-cta target="_blank" rel="noopener">Все связки и периоды →</a>
-      </div>
-    </div>
   </header>
 
   <!-- ===== PIPELINE ===== -->
@@ -519,149 +359,3 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
   </section>
 </div>
 
-<script>
-(() => {
-  const root = document.getElementById("fdrRoot");
-  if (!root || root.dataset.ready) return;
-  root.dataset.ready = "1";
-  const $ = (sel) => root.querySelector(sel);
-
-  const ORIGIN = "https://fundoor.pro";
-  const WS_URL = "wss://fundoor.pro/ws/landing-pairs";
-  const LOCK_TIP = "Спреды, другие периоды и настройки — по подписке";
-  const ROWS = 8;
-
-  // ===================== exchange icons =====================
-  const exIconExt = {
-    apex: "ico", aster: "png", backpack: "png", binance: "ico", binance_alpha: "ico", bingx: "webp",
-    bitget: "png", bitmart: "ico", bybit: "ico", coinex: "png", derive: "png", drift: "png",
-    edgex: "ico", ethereal: "ico", extended: "png", gate: "png", gate_tradfi: "png", hibachi: "jpeg",
-    hl_cash: "avif", hl_flx: "avif", hl_hyna: "png", hl_km: "avif", hl_vntl: "avif", hl_xyz: "avif",
-    hyperliquid: "png", kucoin: "png", lbank: "webp", lighter: "png", mexc: "ico", moex: "svg",
-    nado: "avif", okx: "png", orderly: "png", ostium: "ico", ourbit: "ico", pacifica: "png",
-    paradex: "png", phemex: "jpeg", variational: "jpeg", vestmarkets: "ico",
-  };
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const exIcon = (slug) => `${ORIGIN}/exchange-icons/${encodeURIComponent(slug)}.${exIconExt[slug] || "png"}`;
-  const hideOnError = `onerror="this.style.visibility='hidden'"`;
-
-
-  // ===================== live widget =====================
-  // Пример данных — показывается, только если нет связи с Fundoor (с пометкой «пример»).
-  const demoPairs = [
-    { c: "SAHARA", l: "apex", s: "phemex", apr: 1228, a1: 0.94, a3: 2.89 },
-    { c: "SIREN", l: "coinex", s: "mexc", apr: 1158, a1: 2.31, a3: 8.87 },
-    { c: "XMR", l: "hyperliquid", s: "lighter", apr: 1030, a1: 0.24, a3: 3.19 },
-    { c: "GRAM", l: "gate", s: "coinex", apr: 878, a1: 0.75, a3: 4.02 },
-    { c: "BOX", l: "mexc", s: "kucoin", apr: 801, a1: 1.03, a3: 5.31 },
-    { c: "ETHBTC", l: "kucoin", s: "bybit", apr: 626, a1: 0.57, a3: 0.94 },
-    { c: "SPELL", l: "gate", s: "lbank", apr: 607, a1: 1.51, a3: 3.11 },
-    { c: "SOL", l: "hyperliquid", s: "orderly", apr: 568, a1: 0.30, a3: 1.24 },
-    { c: "TAC", l: "bitget", s: "ourbit", apr: 512, a1: 0.66, a3: 2.05 },
-  ];
-  const demoSorts = {
-    apr: [...demoPairs].sort((a, b) => b.apr - a.apr),
-    a1: [...demoPairs].sort((a, b) => b.a1 - a.a1),
-    a3: [...demoPairs].sort((a, b) => b.a3 - a.a3),
-  };
-
-  const state = { sort: "apr", sorts: null, live: false };
-  const body = $('[data-w="body"]');
-  const table = $('[data-w="table"]');
-
-  const fmtPct = (v, digits) => {
-    if (v === null || v === undefined || !isFinite(v)) return '<span class="locked-cell">—</span>';
-    const cls = v >= 0 ? "val-pos" : "val-neg";
-    const sign = v > 0 ? "+" : "";
-    return `<span class="${cls}">${sign}${Number(v).toFixed(digits)}%</span>`;
-  };
-  const fmtAccrued = (v, days) => {
-    if (v === null || v === undefined || !isFinite(v)) return '<span class="locked-cell">—</span>';
-    const apr = Math.trunc(Number(v) * 365 / days);
-    return `${fmtPct(v, 2)}<span class="cell-sub">≈${apr > 0 ? "+" : ""}${apr}% APR</span>`;
-  };
-  const lockCell = `<td class="locked-cell" title="${LOCK_TIP}"><img class="lock-ico" src="${ORIGIN}/emoji/lock.png" alt="" ${hideOnError}></td>`;
-
-  const render = () => {
-    if (!body) return;
-    root.querySelectorAll("[data-th]").forEach((th) => th.classList.toggle("sorted", th.dataset.th === state.sort));
-    if (table) table.dataset.sort = state.sort;
-    $('[data-w="dot"]')?.classList.toggle("offline", !state.live);
-    const demo = $('[data-w="demo"]');
-    if (demo) demo.hidden = !(state.sorts === demoSorts);
-
-    const rows = ((state.sorts && state.sorts[state.sort]) || []).slice(0, ROWS);
-    if (!rows.length) {
-      body.innerHTML = Array.from({ length: ROWS }, () => `
-        <tr><td class="coin-cell locked-cell">···</td><td class="locked-cell">—</td><td class="locked-cell">—</td>
-        <td class="locked-cell">—</td><td class="locked-cell">—</td>${lockCell}</tr>`).join("");
-      return;
-    }
-    body.innerHTML = rows.map((r) => `
-      <tr>
-        <td class="coin-cell" title="${esc(r.c)}">${esc(r.c)}</td>
-        <td><span class="pair-cell">
-          <img class="ex-ico" src="${exIcon(r.l)}" alt="${esc(r.l)}" title="Лонг: ${esc(r.l)}" ${hideOnError}>
-          <span class="pair-arrow">→</span>
-          <img class="ex-ico" src="${exIcon(r.s)}" alt="${esc(r.s)}" title="Шорт: ${esc(r.s)}" ${hideOnError}>
-        </span></td>
-        <td>${fmtPct(r.apr, 0)}</td>
-        <td>${fmtAccrued(r.a1, 1)}</td>
-        <td>${fmtAccrued(r.a3, 3)}</td>
-        ${lockCell}
-      </tr>`).join("");
-  };
-
-  // Сначала пробуем живые данные; если за 6 с ничего не пришло — показываем пример.
-  const showDemoIfEmpty = () => {
-    if (!state.live && (!state.sorts || state.sorts === demoSorts)) {
-      state.sorts = demoSorts;
-      render();
-    }
-  };
-  let retryMs = 2000;
-  let attempts = 0;
-  const connect = () => {
-    if (!("WebSocket" in window)) return showDemoIfEmpty();
-    let ws;
-    try { ws = new WebSocket(WS_URL); } catch { showDemoIfEmpty(); return; }
-    attempts += 1;
-    ws.onmessage = (ev) => {
-      let msg = null;
-      try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg && msg.type === "pairs_update" && msg.sorts) {
-        state.sorts = msg.sorts;
-        state.live = true;
-        retryMs = 2000;
-        attempts = 0;
-        render();
-      }
-    };
-    ws.onclose = () => {
-      state.live = false;
-      showDemoIfEmpty();
-      render();
-      if (attempts < 6 || document.visibilityState === "visible") {
-        setTimeout(connect, retryMs);
-        retryMs = Math.min(retryMs * 2, 60000);
-      }
-    };
-    ws.onerror = () => { try { ws.close(); } catch {} };
-  };
-
-  $('[data-w="tabs"]')?.addEventListener("click", (e) => {
-    const btn = e.target.closest(".widget-tab");
-    if (!btn) return;
-    state.sort = btn.dataset.sort;
-    root.querySelectorAll(".widget-tab").forEach((b) => {
-      b.classList.toggle("active", b === btn);
-      b.setAttribute("aria-selected", b === btn ? "true" : "false");
-    });
-    render();
-  });
-
-  render();
-  setTimeout(showDemoIfEmpty, 6000);
-  connect();
-})();
-</script>

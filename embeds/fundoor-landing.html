@@ -53,8 +53,8 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
 .fdr-root .widget-tab { color: var(--muted) !important; }
 .fdr-root .widget-tab.active { color: #fff !important; }
 .fdr-root .widget-foot a { color: var(--accent) !important; }
-.fdr-root .pair-cell, .fdr-root .ex-chip, .fdr-root .hero-sub, .fdr-root .section-sub { color: var(--muted) !important; }
-.fdr-root .hero-trust, .fdr-root .ex-group-label, .fdr-root .stage-label { color: var(--muted-2) !important; }
+.fdr-root .pair-cell, .fdr-root .hero-sub, .fdr-root .section-sub { color: var(--muted) !important; }
+.fdr-root .hero-trust, .fdr-root .stage-label { color: var(--muted-2) !important; }
 .fdr-root .demo-badge { color: #fbbf24 !important; }
 
 /* ===== hero ===== */
@@ -279,23 +279,6 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
 .fdr-root .card-body { padding: 15px 16px 17px; }
 .fdr-root .card-body h4 { margin: 0 0 7px; font-size: 15.5px; }
 .fdr-root .card-body p { margin: 0; font-size: 13.5px; line-height: 1.55; }
-
-/* exchanges */
-.fdr-root .ex-groups { display: flex; flex-direction: column; gap: 22px; }
-.fdr-root .ex-group-label { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px; }
-.fdr-root .ex-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-.fdr-root .ex-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px 7px 8px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-.fdr-root .ex-chip img { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; }
 
 /* final CTA */
 .fdr-root .final-cta { text-align: center; padding: 40px 20px 72px; }
@@ -528,13 +511,6 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
     </div>
   </section>
 
-  <!-- ===== EXCHANGES ===== -->
-  <section class="section" style="padding-top: 0;">
-    <h2 class="section-title">Поддерживаемые биржи</h2>
-    <p class="section-sub">32 фьючерсных и 8 спотовых площадок + 6 hip3-провайдеров Hyperliquid. Данные собираются и сопоставляются напрямую с бирж.</p>
-    <div class="ex-groups" data-w="exchanges"></div>
-  </section>
-
   <!-- ===== FINAL CTA ===== -->
   <section class="final-cta" id="fdr-cta">
     <h2>Попробуйте Fundoor в деле</h2>
@@ -555,24 +531,7 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
   const LOCK_TIP = "Спреды, другие периоды и настройки — по подписке";
   const ROWS = 8;
 
-  // ===================== exchanges =====================
-  const exchangeGroups = [
-    { label: "CEX", items: [
-      ["backpack", "Backpack"], ["binance", "Binance"], ["binance_alpha", "Binance Alpha"], ["bingx", "BingX"],
-      ["bitget", "Bitget"], ["bitmart", "Bitmart"], ["bybit", "ByBit"], ["coinex", "CoinEx"],
-      ["gate", "Gate"], ["gate_tradfi", "Gate TradFi"], ["kucoin", "KuCoin"], ["lbank", "LBank"],
-      ["mexc", "MEXC"], ["moex", "MOEX"], ["okx", "OKX"], ["ourbit", "Ourbit"], ["phemex", "Phemex"],
-    ]},
-    { label: "DEX", items: [
-      ["apex", "Apex"], ["aster", "Aster"], ["derive", "Derive"], ["drift", "Drift"], ["edgex", "EdgeX"],
-      ["ethereal", "Ethereal"], ["extended", "Extended"], ["hibachi", "Hibachi"], ["hyperliquid", "Hyperliquid"],
-      ["lighter", "Lighter"], ["nado", "Nado"], ["orderly", "Orderly"], ["ostium", "Ostium"],
-      ["pacifica", "Pacifica"], ["paradex", "Paradex"], ["variational", "Variational"], ["vestmarkets", "Vestmarkets"],
-    ]},
-    { label: "Hyperliquid hip3", items: [
-      ["hl_cash", "cash"], ["hl_flx", "flx"], ["hl_hyna", "hyna"], ["hl_km", "km"], ["hl_vntl", "vntl"], ["hl_xyz", "xyz"],
-    ]},
-  ];
+  // ===================== exchange icons =====================
   const exIconExt = {
     apex: "ico", aster: "png", backpack: "png", binance: "ico", binance_alpha: "ico", bingx: "webp",
     bitget: "png", bitmart: "ico", bybit: "ico", coinex: "png", derive: "png", drift: "png",
@@ -586,17 +545,6 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
   const exIcon = (slug) => `${ORIGIN}/exchange-icons/${encodeURIComponent(slug)}.${exIconExt[slug] || "png"}`;
   const hideOnError = `onerror="this.style.visibility='hidden'"`;
 
-  const exWrap = $('[data-w="exchanges"]');
-  if (exWrap) {
-    exWrap.innerHTML = exchangeGroups.map((g) => `
-      <div>
-        <div class="ex-group-label">${g.label} · ${g.items.length}</div>
-        <div class="ex-grid">
-          ${g.items.map(([slug, name]) => `<span class="ex-chip"><img src="${exIcon(slug)}" alt="" loading="lazy" ${hideOnError}>${name}</span>`).join("")}
-        </div>
-      </div>
-    `).join("");
-  }
 
   // ===================== live widget =====================
   // Пример данных — показывается, только если нет связи с Fundoor (с пометкой «пример»).

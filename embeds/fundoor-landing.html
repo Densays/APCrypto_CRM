@@ -1,0 +1,710 @@
+<!--
+  Fundoor × APCrypto Club — встраиваемый лендинг (HTML-блок конструктора).
+  Всё изолировано внутри .fdr-root: стили не трогают страницу-хост,
+  скрипт не создаёт глобальных переменных и не меняет title/lang/cookie хоста.
+-->
+<style>
+/* ===== full-bleed контейнер ===== */
+html, body { overflow-x: clip; } /* 100vw включает ширину скроллбара — без этого появляется горизонтальный скролл */
+.fdr-root {
+  --bg: #0b0d12;
+  --panel: #10131a;
+  --panel-2: #141823;
+  --border: #1f2532;
+  --border-soft: #1a1f2b;
+  --text: #e8eaf0;
+  --muted: #98a0b3;
+  --muted-2: #6b7386;
+  --accent: #3d7eff;
+  --accent-hover: #5b93ff;
+  --green: #34d399;
+  --red: #f87171;
+  --radius: 12px;
+
+  display: block !important;
+  position: relative !important;
+  width: 100vw !important;
+  margin-left: calc(50% - 50vw) !important;
+  background: var(--bg) !important;
+  color: var(--text) !important;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  touch-action: manipulation;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+.fdr-root *, .fdr-root *::before, .fdr-root *::after { box-sizing: border-box; }
+.fdr-root a { color: inherit; text-decoration: none; }
+.fdr-root img { max-width: 100%; }
+
+/* ===== перебиваем тему конструктора ===== */
+.fdr-root h1, .fdr-root h2, .fdr-root h3, .fdr-root h4 { color: var(--text) !important; font-family: inherit !important; }
+.fdr-root p, .fdr-root li { color: var(--muted) !important; font-family: inherit !important; }
+.fdr-root .accent, .fdr-root .feature-tag, .fdr-root .pipeline-num, .fdr-root .pgref { color: var(--accent) !important; }
+.fdr-root .btn-primary { background: var(--accent) !important; color: #fff !important; border-color: transparent !important; }
+.fdr-root .btn-primary:hover { background: var(--accent-hover) !important; color: #fff !important; }
+.fdr-root .btn-secondary { background: var(--panel) !important; color: var(--text) !important; border-color: var(--border) !important; }
+.fdr-root .val-pos { color: var(--green) !important; }
+.fdr-root .val-neg { color: var(--red) !important; }
+.fdr-root .locked-cell, .fdr-root .cell-sub, .fdr-root .widget-table th, .fdr-root .widget-foot { color: var(--muted-2) !important; }
+.fdr-root .widget-table th.sorted { color: var(--accent) !important; }
+.fdr-root .widget-table td, .fdr-root .coin-cell, .fdr-root .widget-title { color: var(--text) !important; }
+.fdr-root .widget-tab { color: var(--muted) !important; }
+.fdr-root .widget-tab.active { color: #fff !important; }
+.fdr-root .widget-foot a { color: var(--accent) !important; }
+.fdr-root .pair-cell, .fdr-root .ex-chip, .fdr-root .hero-sub, .fdr-root .section-sub { color: var(--muted) !important; }
+.fdr-root .hero-trust, .fdr-root .ex-group-label, .fdr-root .stage-label { color: var(--muted-2) !important; }
+.fdr-root .demo-badge { color: #fbbf24 !important; }
+
+/* ===== hero ===== */
+.fdr-root .hero {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 56px 20px 40px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 40px;
+  align-items: center;
+}
+.fdr-root .hero-copy h1 {
+  margin: 0;
+  font-size: clamp(30px, 4.2vw, 46px);
+  line-height: 1.12;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+.fdr-root .hero-sub { margin: 18px 0 0; font-size: 16px; line-height: 1.6; max-width: 560px; }
+.fdr-root .hero-actions { margin-top: 26px; display: flex; gap: 12px; flex-wrap: wrap; }
+.fdr-root .btn {
+  padding: 12px 22px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1.2;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.fdr-root .btn:hover { transform: translateY(-1px); }
+.fdr-root .btn-lg { font-size: 18px; padding: 16px 40px; }
+.fdr-root .hero-trust { margin-top: 22px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 13.5px; }
+.fdr-root .hero-trust > span { display: inline-flex; align-items: center; gap: 7px; }
+.fdr-root .trust-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex: none; }
+
+/* ===== live widget ===== */
+.fdr-root .widget {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+}
+.fdr-root .widget-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+.fdr-root .widget-title { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 14.5px; }
+.fdr-root .live-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green);
+  animation: fdr-livepulse 2s infinite;
+  flex: none;
+}
+.fdr-root .live-dot.offline { background: var(--muted-2); animation: none; }
+@keyframes fdr-livepulse {
+  0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.45); }
+  70% { box-shadow: 0 0 0 7px rgba(52, 211, 153, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+}
+.fdr-root .demo-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 20px;
+  background: rgba(251, 191, 36, 0.12);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.fdr-root .demo-badge[hidden] { display: none; }
+.fdr-root .widget-tabs { display: flex; gap: 4px; background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 3px; }
+.fdr-root .widget-tab {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fdr-root .widget-tab.active { background: var(--accent); }
+.fdr-root .widget-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.fdr-root .widget-table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 0; }
+.fdr-root .widget-table th {
+  text-align: right;
+  font-weight: 600;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 9px 12px 7px;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  background: none;
+  white-space: nowrap;
+}
+.fdr-root .widget-table th:first-child, .fdr-root .widget-table th:nth-child(2) { text-align: left; }
+.fdr-root .widget-table td {
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  background: none;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.fdr-root .widget-table td:first-child, .fdr-root .widget-table td:nth-child(2) { text-align: left; }
+.fdr-root .widget-table tbody tr:last-child td { border-bottom: none; }
+.fdr-root .widget-table tbody tr:hover { background: var(--panel-2); }
+.fdr-root .coin-cell { font-weight: 700; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.fdr-root .pair-cell { display: flex; align-items: center; gap: 5px; font-size: 12.5px; }
+.fdr-root .ex-ico { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; background: #0a0d13; flex: none; }
+.fdr-root .pair-arrow { color: var(--muted-2); font-size: 11px; }
+.fdr-root .val-pos, .fdr-root .val-neg { font-weight: 600; }
+.fdr-root .cell-sub { display: block; font-size: 10px; font-weight: 500; line-height: 1.2; margin-top: 1px; }
+.fdr-root .locked-cell { cursor: default; }
+.fdr-root .lock-ico { width: 12px; height: 12px; object-fit: contain; vertical-align: -1px; opacity: 0.8; }
+.fdr-root .widget-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 16px;
+  font-size: 12.5px;
+  border-top: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+.fdr-root .widget-foot a { font-weight: 600; }
+.fdr-root .widget-foot a:hover { text-decoration: underline; }
+
+/* ===== sections ===== */
+.fdr-root .section { max-width: 1200px; margin: 0 auto; padding: 56px 20px; }
+.fdr-root .section-title { margin: 0 0 10px; font-size: clamp(24px, 3vw, 32px); font-weight: 800; letter-spacing: -0.3px; text-align: center; }
+.fdr-root .section-sub { margin: 0 auto 36px; max-width: 640px; text-align: center; font-size: 15.5px; line-height: 1.6; }
+
+/* pipeline */
+.fdr-root .pipeline { display: flex; align-items: stretch; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.fdr-root .pipeline-step {
+  flex: 1 1 200px;
+  max-width: 260px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  transition: border-color 0.15s ease;
+}
+.fdr-root .pipeline-step:hover { border-color: var(--accent); }
+.fdr-root .pipeline-num { font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
+.fdr-root .pipeline-step h3 { margin: 7px 0 6px; font-size: 16.5px; }
+.fdr-root .pipeline-step p { margin: 0; font-size: 13.5px; line-height: 1.5; }
+
+/* feature big */
+.fdr-root .feature {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 40px;
+  align-items: center;
+  padding: 40px 0;
+}
+.fdr-root .feature.reverse { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+.fdr-root .feature.reverse .feature-copy { order: 2; }
+.fdr-root .feature.reverse .feature-shot { order: 1; }
+.fdr-root .feature-copy h3 { margin: 0 0 12px; font-size: 24px; font-weight: 800; letter-spacing: -0.2px; }
+.fdr-root .feature-copy p { margin: 0 0 14px; font-size: 15px; line-height: 1.65; }
+.fdr-root .feature-copy ul { margin: 0; padding-left: 18px; font-size: 14.5px; line-height: 1.8; }
+.fdr-root .feature-shot img {
+  width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  display: block;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+}
+.fdr-root .feature-tag {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 8px;
+}
+
+/* stage cards */
+.fdr-root .stage-label {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px;
+  margin: 34px 0 14px;
+}
+.fdr-root .stage-label::after { content: ""; flex: 1; height: 1px; background: var(--border-soft); }
+.fdr-root .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.fdr-root .card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s ease;
+}
+.fdr-root .card:hover { border-color: #2c3547; }
+.fdr-root .card img {
+  width: 100%;
+  display: block;
+  border-bottom: 1px solid var(--border-soft);
+  aspect-ratio: 16/9;
+  object-fit: contain;
+  object-position: top;
+  background: #0a0d13;
+}
+.fdr-root .card-body { padding: 15px 16px 17px; }
+.fdr-root .card-body h4 { margin: 0 0 7px; font-size: 15.5px; }
+.fdr-root .card-body p { margin: 0; font-size: 13.5px; line-height: 1.55; }
+
+/* exchanges */
+.fdr-root .ex-groups { display: flex; flex-direction: column; gap: 22px; }
+.fdr-root .ex-group-label { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px; }
+.fdr-root .ex-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.fdr-root .ex-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 7px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.fdr-root .ex-chip img { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; }
+
+/* final CTA */
+.fdr-root .final-cta { text-align: center; padding: 40px 20px 72px; }
+.fdr-root .final-cta h2 { margin: 0 0 10px; font-size: clamp(22px, 2.6vw, 28px); font-weight: 800; }
+.fdr-root .final-cta p { margin: 0 auto 24px; max-width: 520px; font-size: 15px; line-height: 1.6; }
+
+@media (max-width: 1024px) {
+  .fdr-root .hero { grid-template-columns: 1fr; padding-top: 36px; gap: 30px; }
+  .fdr-root .feature, .fdr-root .feature.reverse { grid-template-columns: 1fr; gap: 20px; padding: 26px 0; }
+  .fdr-root .feature.reverse .feature-copy { order: 1; }
+  .fdr-root .feature.reverse .feature-shot { order: 2; }
+}
+@media (min-width: 1025px) and (max-width: 1150px) {
+  .fdr-root .widget-table th:nth-child(6), .fdr-root .widget-table td:nth-child(6) { display: none; }
+  .fdr-root .widget-table th, .fdr-root .widget-table td { padding-left: 8px; padding-right: 8px; }
+  .fdr-root .coin-cell { max-width: 76px; }
+}
+@media (max-width: 560px) {
+  .fdr-root .hero { padding: 28px 16px 24px; }
+  .fdr-root .section { padding: 40px 16px; }
+  .fdr-root .hero-actions .btn, .fdr-root .final-cta .btn { width: 100%; }
+  .fdr-root .hero-trust { gap: 8px 16px; }
+  .fdr-root .btn-lg { font-size: 16px; padding: 14px 20px; }
+  .fdr-root .widget-table th:nth-child(6), .fdr-root .widget-table td:nth-child(6) { display: none; }
+  .fdr-root .widget-table:not([data-sort="a3"]) th:nth-child(5),
+  .fdr-root .widget-table:not([data-sort="a3"]) td:nth-child(5) { display: none; }
+  .fdr-root .widget-table[data-sort="a3"] th:nth-child(4),
+  .fdr-root .widget-table[data-sort="a3"] td:nth-child(4) { display: none; }
+  .fdr-root .widget-table th, .fdr-root .widget-table td { padding-left: 6px; padding-right: 6px; }
+  .fdr-root .coin-cell { max-width: 66px; }
+  .fdr-root .ex-ico { width: 16px; height: 16px; }
+  .fdr-root .pair-cell { gap: 4px; }
+  .fdr-root .cell-sub { font-size: 9px; }
+  .fdr-root .cards { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fdr-root .live-dot { animation: none; }
+  .fdr-root .btn:hover { transform: none; }
+}
+</style>
+
+<div class="fdr-root" id="fdrRoot">
+  <!-- ===== HERO + LIVE WIDGET ===== -->
+  <header class="hero">
+    <div class="hero-copy">
+      <h1>Полный цикл арбитража — <span class="accent">в одном сервисе</span></h1>
+      <p class="hero-sub">Живые данные с 32 фьючерсных и 8 спотовых бирж плюс 6 hip3-провайдеров Hyperliquid: связки, спреды, фандинг, история выплат и алерты. От поиска связки до закрытия позиции в прибыль.</p>
+      <div class="hero-actions">
+        <a href="https://fundoor.pro/register?invite=apclub" class="btn btn-primary" data-cta target="_blank" rel="noopener">Получить доступ на 30 дней</a>
+        <a href="#fdr-scanner" class="btn btn-secondary">Что внутри</a>
+      </div>
+      <div class="hero-trust">
+        <span><span class="trust-dot"></span>40+ бирж и провайдеров</span>
+        <span><span class="trust-dot"></span>Данные в реальном времени</span>
+        <span><span class="trust-dot"></span>Алерты в Telegram</span>
+      </div>
+    </div>
+
+    <div class="widget">
+      <div class="widget-head">
+        <div class="widget-title">
+          <span class="live-dot offline" data-w="dot"></span>
+          <span>Живые фандинг-связки</span>
+          <span class="demo-badge" data-w="demo" hidden title="Нет связи с Fundoor — показан пример">пример</span>
+        </div>
+        <div class="widget-tabs" data-w="tabs" role="tablist">
+          <button type="button" class="widget-tab active" data-sort="apr" role="tab" aria-selected="true">APR сейчас</button>
+          <button type="button" class="widget-tab" data-sort="a1" role="tab" aria-selected="false">За 1 день</button>
+          <button type="button" class="widget-tab" data-sort="a3" role="tab" aria-selected="false">За 3 дня</button>
+        </div>
+      </div>
+      <div class="widget-scroll">
+        <table class="widget-table" data-w="table" data-sort="apr">
+          <thead>
+            <tr>
+              <th>Монета</th>
+              <th>Связка</th>
+              <th data-th="apr" class="sorted">APR</th>
+              <th data-th="a1">1д</th>
+              <th data-th="a3">3д</th>
+              <th class="locked-cell" title="Спреды, другие периоды и настройки — по подписке">Спред</th>
+            </tr>
+          </thead>
+          <tbody data-w="body"></tbody>
+        </table>
+      </div>
+      <div class="widget-foot">
+        <span>Одна связка на монету · только фьючерсы</span>
+        <a href="https://fundoor.pro/register?invite=apclub" data-cta target="_blank" rel="noopener">Все связки и периоды →</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== PIPELINE ===== -->
+  <section class="section">
+    <h2 class="section-title">Как работает арбитражный пайплайн</h2>
+    <p class="section-sub">Fundoor ведёт связку по всем этапам — искать, анализировать и сопровождать позиции можно не выходя из сервиса.</p>
+    <div class="pipeline">
+      <a class="pipeline-step" href="#fdr-scanner">
+        <div class="pipeline-num">1</div>
+        <h3>Найти связку</h3>
+        <p><span class="pgref">Сканер</span>, <span class="pgref">Топ фандинги</span> и <span class="pgref">Мультитрекер</span> находят расхождения между биржами.</p>
+      </a>
+      <a class="pipeline-step" href="#fdr-spread">
+        <div class="pipeline-num">2</div>
+        <h3>Проанализировать</h3>
+        <p><span class="pgref">График спреда</span> и <span class="pgref">История</span> показывают, как связка вела себя и платила на дистанции.</p>
+      </a>
+      <a class="pipeline-step" href="#fdr-track">
+        <div class="pipeline-num">3</div>
+        <h3>Вести позицию</h3>
+        <p><span class="pgref">Портфель</span>, <span class="pgref">Точечные алерты</span> и <span class="pgref">События</span> следят за позицией вместо вас.</p>
+      </a>
+      <a class="pipeline-step" href="#fdr-cta">
+        <div class="pipeline-num">4</div>
+        <h3>Закрыть в прибыль</h3>
+        <p>Сигнал о падении APR или росте спреда выхода — и позиция закрыта вовремя.</p>
+      </a>
+    </div>
+  </section>
+
+  <!-- ===== SCANNER ===== -->
+  <section class="section" id="fdr-scanner" style="padding-top: 20px;">
+    <div class="feature">
+      <div class="feature-copy">
+        <span class="feature-tag">Главный инструмент</span>
+        <h3>Сканер связок</h3>
+        <p>Все арбитражные связки между 40+ площадками в одной таблице: курсовой спред, фандинг, годовые, накопленные выплаты и ранги. Гибкие фильтры, профили настроек и уведомления о новых связках.</p>
+        <ul>
+          <li>Сортировка по спреду, фандингу, APR и накопленным</li>
+          <li>Фильтры по биржам, объёмам, ликвидности и лимитам</li>
+          <li>Гибкий конструктор связок</li>
+          <li>Таблицы обзора и пар по каждой монете</li>
+        </ul>
+      </div>
+      <div class="feature-shot"><img src="https://fundoor.pro/screenshots/screenshot-main-ru-4.png" alt="Сканер связок Fundoor" loading="lazy"></div>
+    </div>
+  </section>
+
+  <!-- ===== SPREAD CHART ===== -->
+  <section class="section" id="fdr-spread" style="padding-top: 0;">
+    <div class="feature reverse">
+      <div class="feature-copy">
+        <span class="feature-tag">Анализ связки</span>
+        <h3>График спреда</h3>
+        <p>Живой стакан-в-стакан спред входа и выхода, графики премиум-индекса и фандинга, бектест PnL по истории выплат. Полный набор метрик, чтобы принять решение до входа и вести позицию до самого выхода.</p>
+        <ul>
+          <li>Спреды входа/выхода по реальным стаканам в реальном времени</li>
+          <li>Бектест выплат фандинга по истории связки</li>
+          <li>Детальные графики фандинга и индексных отклонений</li>
+          <li>Калькулятор позиции с реальным PnL</li>
+          <li>Дополнительные алерты для отслеживания ситуации</li>
+        </ul>
+      </div>
+      <div class="feature-shot"><img src="https://fundoor.pro/screenshots/card-spreadchart-ru.png" alt="График спреда Fundoor" loading="lazy"></div>
+    </div>
+  </section>
+
+  <!-- ===== SUPPORTING TOOLS BY STAGE ===== -->
+  <section class="section" id="fdr-track" style="padding-top: 0;">
+    <h2 class="section-title">Инструменты на каждый этап</h2>
+    <p class="section-sub">Вспомогательные страницы, которые ценят практикующие арбитражники — у большинства сканеров их просто нет.</p>
+
+    <div class="stage-label">Поиск</div>
+    <div class="cards">
+      <div class="card">
+        <img src="https://fundoor.pro/screenshots/card-toprates-ru.png" alt="Топ фандинги" loading="lazy">
+        <div class="card-body">
+          <h4>Топ фандинги</h4>
+          <p>Рынки по отдельности: поиск отклонений от индекса, фандингов и APR с алертами по ним.</p>
+        </div>
+      </div>
+      <div class="card">
+        <img src="https://fundoor.pro/screenshots/card-multitracker-ru.png" alt="Мультитрекер" loading="lazy">
+        <div class="card-body">
+          <h4>Мультитрекер</h4>
+          <p>Все спреды по одной монете в перекрёстной таблице — вся картина в одном месте.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage-label">Анализ</div>
+    <div class="cards">
+      <div class="card">
+        <img src="https://fundoor.pro/screenshots/card-history-ru.png" alt="История фандингов" loading="lazy">
+        <div class="card-body">
+          <h4>История фандингов</h4>
+          <p>Исторические выплаты по любым рынкам: интервалы, режимы сравнения и накопленные суммы.</p>
+        </div>
+      </div>
+      <div class="card">
+        <img src="https://fundoor.pro/screenshots/card-accrued-ru.png" alt="Накопленный режим" loading="lazy">
+        <div class="card-body">
+          <h4>Накопленный режим</h4>
+          <p>Сколько связка заплатила бы за период — сравнение доходности на дистанции.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage-label">Сопровождение</div>
+    <div class="cards">
+      <div class="card">
+        <img src="https://fundoor.pro/screenshots/card-portfolio-ru.png" alt="Портфель" loading="lazy">
+        <div class="card-body">
+          <h4>Портфель</h4>
+          <p>Ваши позиции карточками: цены, фандинги, спреды и накопленные — всё в одном экране.</p>
+        </div>
+      </div>
+      <div class="card">
+        <img src="https://fundoor.pro/screenshots/card-alerts-ru.png" alt="Точечные алерты" loading="lazy">
+        <div class="card-body">
+          <h4>Точечные алерты</h4>
+          <p>Сигналы по множеству метрик: APR упал — выходим, спред входа вырос — добираем.</p>
+        </div>
+      </div>
+      <div class="card">
+        <img src="https://fundoor.pro/screenshots/card-events-ru.png" alt="События" loading="lazy">
+        <div class="card-body">
+          <h4>События</h4>
+          <p>Смены интервалов, лимитов фандинга и состава индекса — оповещения и их история.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== EXCHANGES ===== -->
+  <section class="section" style="padding-top: 0;">
+    <h2 class="section-title">Поддерживаемые биржи</h2>
+    <p class="section-sub">32 фьючерсных и 8 спотовых площадок + 6 hip3-провайдеров Hyperliquid. Данные собираются и сопоставляются напрямую с бирж.</p>
+    <div class="ex-groups" data-w="exchanges"></div>
+  </section>
+
+  <!-- ===== FINAL CTA ===== -->
+  <section class="final-cta" id="fdr-cta">
+    <h2>Попробуйте Fundoor в деле</h2>
+    <p>Для участников APCrypto Club — 30 дней доступа ко всем инструментам по инвайту клуба.</p>
+    <a href="https://fundoor.pro/register?invite=apclub" class="btn btn-primary btn-lg" data-cta target="_blank" rel="noopener">Получить доступ на 30 дней</a>
+  </section>
+</div>
+
+<script>
+(() => {
+  const root = document.getElementById("fdrRoot");
+  if (!root || root.dataset.ready) return;
+  root.dataset.ready = "1";
+  const $ = (sel) => root.querySelector(sel);
+
+  const ORIGIN = "https://fundoor.pro";
+  const WS_URL = "wss://fundoor.pro/ws/landing-pairs";
+  const LOCK_TIP = "Спреды, другие периоды и настройки — по подписке";
+  const ROWS = 8;
+
+  // ===================== exchanges =====================
+  const exchangeGroups = [
+    { label: "CEX", items: [
+      ["backpack", "Backpack"], ["binance", "Binance"], ["binance_alpha", "Binance Alpha"], ["bingx", "BingX"],
+      ["bitget", "Bitget"], ["bitmart", "Bitmart"], ["bybit", "ByBit"], ["coinex", "CoinEx"],
+      ["gate", "Gate"], ["gate_tradfi", "Gate TradFi"], ["kucoin", "KuCoin"], ["lbank", "LBank"],
+      ["mexc", "MEXC"], ["moex", "MOEX"], ["okx", "OKX"], ["ourbit", "Ourbit"], ["phemex", "Phemex"],
+    ]},
+    { label: "DEX", items: [
+      ["apex", "Apex"], ["aster", "Aster"], ["derive", "Derive"], ["drift", "Drift"], ["edgex", "EdgeX"],
+      ["ethereal", "Ethereal"], ["extended", "Extended"], ["hibachi", "Hibachi"], ["hyperliquid", "Hyperliquid"],
+      ["lighter", "Lighter"], ["nado", "Nado"], ["orderly", "Orderly"], ["ostium", "Ostium"],
+      ["pacifica", "Pacifica"], ["paradex", "Paradex"], ["variational", "Variational"], ["vestmarkets", "Vestmarkets"],
+    ]},
+    { label: "Hyperliquid hip3", items: [
+      ["hl_cash", "cash"], ["hl_flx", "flx"], ["hl_hyna", "hyna"], ["hl_km", "km"], ["hl_vntl", "vntl"], ["hl_xyz", "xyz"],
+    ]},
+  ];
+  const exIconExt = {
+    apex: "ico", aster: "png", backpack: "png", binance: "ico", binance_alpha: "ico", bingx: "webp",
+    bitget: "png", bitmart: "ico", bybit: "ico", coinex: "png", derive: "png", drift: "png",
+    edgex: "ico", ethereal: "ico", extended: "png", gate: "png", gate_tradfi: "png", hibachi: "jpeg",
+    hl_cash: "avif", hl_flx: "avif", hl_hyna: "png", hl_km: "avif", hl_vntl: "avif", hl_xyz: "avif",
+    hyperliquid: "png", kucoin: "png", lbank: "webp", lighter: "png", mexc: "ico", moex: "svg",
+    nado: "avif", okx: "png", orderly: "png", ostium: "ico", ourbit: "ico", pacifica: "png",
+    paradex: "png", phemex: "jpeg", variational: "jpeg", vestmarkets: "ico",
+  };
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const exIcon = (slug) => `${ORIGIN}/exchange-icons/${encodeURIComponent(slug)}.${exIconExt[slug] || "png"}`;
+  const hideOnError = `onerror="this.style.visibility='hidden'"`;
+
+  const exWrap = $('[data-w="exchanges"]');
+  if (exWrap) {
+    exWrap.innerHTML = exchangeGroups.map((g) => `
+      <div>
+        <div class="ex-group-label">${g.label} · ${g.items.length}</div>
+        <div class="ex-grid">
+          ${g.items.map(([slug, name]) => `<span class="ex-chip"><img src="${exIcon(slug)}" alt="" loading="lazy" ${hideOnError}>${name}</span>`).join("")}
+        </div>
+      </div>
+    `).join("");
+  }
+
+  // ===================== live widget =====================
+  // Пример данных — показывается, только если нет связи с Fundoor (с пометкой «пример»).
+  const demoPairs = [
+    { c: "SAHARA", l: "apex", s: "phemex", apr: 1228, a1: 0.94, a3: 2.89 },
+    { c: "SIREN", l: "coinex", s: "mexc", apr: 1158, a1: 2.31, a3: 8.87 },
+    { c: "XMR", l: "hyperliquid", s: "lighter", apr: 1030, a1: 0.24, a3: 3.19 },
+    { c: "GRAM", l: "gate", s: "coinex", apr: 878, a1: 0.75, a3: 4.02 },
+    { c: "BOX", l: "mexc", s: "kucoin", apr: 801, a1: 1.03, a3: 5.31 },
+    { c: "ETHBTC", l: "kucoin", s: "bybit", apr: 626, a1: 0.57, a3: 0.94 },
+    { c: "SPELL", l: "gate", s: "lbank", apr: 607, a1: 1.51, a3: 3.11 },
+    { c: "SOL", l: "hyperliquid", s: "orderly", apr: 568, a1: 0.30, a3: 1.24 },
+    { c: "TAC", l: "bitget", s: "ourbit", apr: 512, a1: 0.66, a3: 2.05 },
+  ];
+  const demoSorts = {
+    apr: [...demoPairs].sort((a, b) => b.apr - a.apr),
+    a1: [...demoPairs].sort((a, b) => b.a1 - a.a1),
+    a3: [...demoPairs].sort((a, b) => b.a3 - a.a3),
+  };
+
+  const state = { sort: "apr", sorts: null, live: false };
+  const body = $('[data-w="body"]');
+  const table = $('[data-w="table"]');
+
+  const fmtPct = (v, digits) => {
+    if (v === null || v === undefined || !isFinite(v)) return '<span class="locked-cell">—</span>';
+    const cls = v >= 0 ? "val-pos" : "val-neg";
+    const sign = v > 0 ? "+" : "";
+    return `<span class="${cls}">${sign}${Number(v).toFixed(digits)}%</span>`;
+  };
+  const fmtAccrued = (v, days) => {
+    if (v === null || v === undefined || !isFinite(v)) return '<span class="locked-cell">—</span>';
+    const apr = Math.trunc(Number(v) * 365 / days);
+    return `${fmtPct(v, 2)}<span class="cell-sub">≈${apr > 0 ? "+" : ""}${apr}% APR</span>`;
+  };
+  const lockCell = `<td class="locked-cell" title="${LOCK_TIP}"><img class="lock-ico" src="${ORIGIN}/emoji/lock.png" alt="" ${hideOnError}></td>`;
+
+  const render = () => {
+    if (!body) return;
+    root.querySelectorAll("[data-th]").forEach((th) => th.classList.toggle("sorted", th.dataset.th === state.sort));
+    if (table) table.dataset.sort = state.sort;
+    $('[data-w="dot"]')?.classList.toggle("offline", !state.live);
+    const demo = $('[data-w="demo"]');
+    if (demo) demo.hidden = !(state.sorts === demoSorts);
+
+    const rows = ((state.sorts && state.sorts[state.sort]) || []).slice(0, ROWS);
+    if (!rows.length) {
+      body.innerHTML = Array.from({ length: ROWS }, () => `
+        <tr><td class="coin-cell locked-cell">···</td><td class="locked-cell">—</td><td class="locked-cell">—</td>
+        <td class="locked-cell">—</td><td class="locked-cell">—</td>${lockCell}</tr>`).join("");
+      return;
+    }
+    body.innerHTML = rows.map((r) => `
+      <tr>
+        <td class="coin-cell" title="${esc(r.c)}">${esc(r.c)}</td>
+        <td><span class="pair-cell">
+          <img class="ex-ico" src="${exIcon(r.l)}" alt="${esc(r.l)}" title="Лонг: ${esc(r.l)}" ${hideOnError}>
+          <span class="pair-arrow">→</span>
+          <img class="ex-ico" src="${exIcon(r.s)}" alt="${esc(r.s)}" title="Шорт: ${esc(r.s)}" ${hideOnError}>
+        </span></td>
+        <td>${fmtPct(r.apr, 0)}</td>
+        <td>${fmtAccrued(r.a1, 1)}</td>
+        <td>${fmtAccrued(r.a3, 3)}</td>
+        ${lockCell}
+      </tr>`).join("");
+  };
+
+  // Сначала пробуем живые данные; если за 6 с ничего не пришло — показываем пример.
+  const showDemoIfEmpty = () => {
+    if (!state.live && (!state.sorts || state.sorts === demoSorts)) {
+      state.sorts = demoSorts;
+      render();
+    }
+  };
+  let retryMs = 2000;
+  let attempts = 0;
+  const connect = () => {
+    if (!("WebSocket" in window)) return showDemoIfEmpty();
+    let ws;
+    try { ws = new WebSocket(WS_URL); } catch { showDemoIfEmpty(); return; }
+    attempts += 1;
+    ws.onmessage = (ev) => {
+      let msg = null;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg && msg.type === "pairs_update" && msg.sorts) {
+        state.sorts = msg.sorts;
+        state.live = true;
+        retryMs = 2000;
+        attempts = 0;
+        render();
+      }
+    };
+    ws.onclose = () => {
+      state.live = false;
+      showDemoIfEmpty();
+      render();
+      if (attempts < 6 || document.visibilityState === "visible") {
+        setTimeout(connect, retryMs);
+        retryMs = Math.min(retryMs * 2, 60000);
+      }
+    };
+    ws.onerror = () => { try { ws.close(); } catch {} };
+  };
+
+  $('[data-w="tabs"]')?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".widget-tab");
+    if (!btn) return;
+    state.sort = btn.dataset.sort;
+    root.querySelectorAll(".widget-tab").forEach((b) => {
+      b.classList.toggle("active", b === btn);
+      b.setAttribute("aria-selected", b === btn ? "true" : "false");
+    });
+    render();
+  });
+
+  render();
+  setTimeout(showDemoIfEmpty, 6000);
+  connect();
+})();
+</script>

@@ -85,6 +85,30 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
 .fdr-root .hero-trust > span { display: inline-flex; align-items: center; gap: 7px; }
 .fdr-root .trust-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex: none; }
 
+/* сноска под кнопкой регистрации */
+.fdr-root .reg-note {
+  max-width: 560px;
+  margin: 18px auto 0;
+  padding: 14px 18px 16px;
+  text-align: left;
+  background: rgba(251, 191, 36, 0.07);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: var(--radius);
+}
+.fdr-root .reg-note-title { font-size: 13px; font-weight: 800; letter-spacing: 0.8px; color: #fbbf24 !important; margin-bottom: 6px; }
+.fdr-root .reg-note .reg-note-text { margin: 0 0 12px; font-size: 14px; line-height: 1.55; color: var(--text) !important; }
+.fdr-root .reg-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.fdr-root .reg-steps li { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text) !important; }
+.fdr-root .reg-step-num {
+  flex: none;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12.5px; font-weight: 800;
+  background: rgba(251, 191, 36, 0.18);
+  color: #fbbf24 !important;
+}
+
 /* ===== sections ===== */
 .fdr-root .section { max-width: 1200px; margin: 0 auto; padding: 56px 20px; }
 .fdr-root .section-title { margin: 0 0 10px; font-size: clamp(24px, 3vw, 32px); font-weight: 800; letter-spacing: -0.3px; text-align: center; }
@@ -203,6 +227,14 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
       <div class="hero-actions">
         <a href="https://fundoor.pro/register?invite=apclub" class="btn btn-primary" data-cta target="_blank" rel="noopener">Получить доступ на 30 дней</a>
         <a href="#fdr-scanner" class="btn btn-secondary">Что внутри</a>
+      </div>
+      <div class="reg-note">
+        <div class="reg-note-title">ВАЖНО!</div>
+        <p class="reg-note-text">После регистрации по нашему инвайт-коду пришлите почту, на которую зарегистрировались, в ответ к этому заданию. В течение 24 часов ваш аккаунт будет активирован.</p>
+        <ol class="reg-steps">
+          <li><span class="reg-step-num">1</span><span>Регистрация по инвайт-коду</span></li>
+          <li><span class="reg-step-num">2</span><span>Сообщить почту администратору для активации аккаунта</span></li>
+        </ol>
       </div>
       <div class="hero-trust">
         <span><span class="trust-dot"></span>40+ бирж и провайдеров</span>
@@ -364,6 +396,14 @@ html, body { overflow-x: clip; } /* 100vw включает ширину скро
     <h2>Попробуйте Fundoor в деле</h2>
     <p>Для участников APCrypto Club — 30 дней доступа ко всем инструментам по инвайту клуба.</p>
     <a href="https://fundoor.pro/register?invite=apclub" class="btn btn-primary btn-lg" data-cta target="_blank" rel="noopener">Получить доступ на 30 дней</a>
+    <div class="reg-note">
+      <div class="reg-note-title">ВАЖНО!</div>
+      <p class="reg-note-text">После регистрации по нашему инвайт-коду пришлите почту, на которую зарегистрировались, в ответ к этому заданию. В течение 24 часов ваш аккаунт будет активирован.</p>
+      <ol class="reg-steps">
+        <li><span class="reg-step-num">1</span><span>Регистрация по инвайт-коду</span></li>
+        <li><span class="reg-step-num">2</span><span>Сообщить почту администратору для активации аккаунта</span></li>
+      </ol>
+    </div>
   </section>
 </div>
 
